@@ -1,0 +1,25 @@
+# Environment — never commit your API key
+.env
+
+# Generated output — large files, reproducible from pipeline
+output/*/raw/
+output/**/*.png
+output/**/test_*.png
+
+# Quota state — resets daily, no value in versioning
+config/quota_state.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.Python
+*.egg-info/
+
+# macOS
+.DS_Store
+
+# Editor
+.vscode/
+.idea/
+*.swp

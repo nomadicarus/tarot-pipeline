@@ -1,0 +1,25 @@
+{
+  "decks": [
+    {
+      "id": "lego_explosive",
+      "name": "Lego Explosive Media",
+      "output_dir": "output/lego_explosive",
+      "style_prefix": "LEGO minifigure characters, Explosive Media satirical graphic novel art style, bold flat colours, sharp black ink outlines, anti-war political cartoon aesthetic, American military-industrial complex satire, high contrast primary colours, comic book panel composition, irreverent and subversive tone",
+      "style_suffix": "LEGO brick textures visible, yellow LEGO hands and faces, bold graphic design, no photorealism"
+    },
+    {
+      "id": "thoth",
+      "name": "Thoth Tarot",
+      "output_dir": "output/thoth",
+      "style_prefix": "Thoth tarot card illustration, Lady Frieda Harris projective geometry painting style, esoteric sacred geometry, rich jewel-tone colour palette, Aleister Crowley occult symbolism, art deco mystical illustration, luminous translucent overlapping geometric forms, deeply symbolic",
+      "style_suffix": "projective geometry lines, luminous and transcendent, museum quality occult illustration"
+    },
+    {
+      "id": "claymation",
+      "name": "Claymation Thoth",
+      "output_dir": "output/claymation",
+      "style_prefix": "claymation stop-motion animation style, hand-sculpted clay figures with visible fingerprints and clay texture, Wallace and Gromit Aardman Animations aesthetic, warm diffuse studio lighting, tactile physical quality, Thoth tarot sacred geometry and occult symbolism preserved, clay models of esoteric symbols",
+      "style_suffix": "visibly hand-made clay surfaces, soft warm studio lighting, charming and slightly imperfect clay craftsmanship"
+    }
+  ]
+}
