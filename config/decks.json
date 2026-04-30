@@ -39,10 +39,10 @@
       "output_dir": "output/thoth",
       "technical_parameters": {
         "aspect_ratio": "741:1024",
-        "rendering_engine": "Projective Geometry / Watercolor and Airbrush"
+        "rendering_engine": "Projective Geometry / Watercolor"
       },
-      "rendering_engine_prefix": "Projective Geometry / Watercolor and Airbrush rendering.",
-      "master_prompt_template": "A tarot card in the authentic Thoth Tarot style of Lady Frieda Harris. Mixed-media painting (oil, acrylic, and possibly colored pencil on textured paper), technique reflecting Stained-glass effect, linear and geometric fragmentation, faceted planes. The image is a masterpiece of occult symbolism composed of geometric forms and radiant lines. An intricate painting using translucent watercolour and smooth airbrush techniques — luminous overlapping layers creating depth through transparency and shifting light. Surrealist and highly intellectual. Projective geometry governs the composition: sharp intersecting lines of light, radiating power centres, complex mathematical structures, dense matrix of sacred geometry, interlocking circles, and multi-dimensional planes folding into one another. Flashing colours — highly saturated contrasting hues creating a shimmering energetic effect.Sharp precise lines, esoteric glyphs, cosmic power.",
+      "rendering_engine_prefix": "Projective Geometry / Watercolor",
+      "master_prompt_template": "A tarot card in the authentic Thoth Tarot style of Lady Frieda Harris. Technique reflecting Stained-glass effect, linear and geometric fragmentation, faceted planes but the medium is translucent watercolour and smooth airbrush, art deco style, luminous overlapping layers creating depth through transparency and shifting light. The image is a masterpiece of occult symbolism composed of geometric forms and radiant lines. Surrealist and highly intellectual. Projective geometry governs the composition: sharp intersecting lines of light, radiating power centres, complex mathematical structures, dense matrix of sacred geometry, interlocking circles, and multi-dimensional planes folding into one another. Flashing colours — highly saturated contrasting hues creating a shimmering energetic effect.Sharp precise lines, esoteric glyphs, cosmic power.",
       "technical_suffix": "High-resolution, fine art texture, sharp focus, 8k resolution.",
       "style_tags": [
         "Lady Frieda Harris style",

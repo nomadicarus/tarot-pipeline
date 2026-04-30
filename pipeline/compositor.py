@@ -10,11 +10,11 @@ Layout:
 Output: final composited PNG per card, ready for print or display.
 """
 
-import pathlib
-import logging
 import base64
-import re
 import io
+import logging
+import pathlib
+import re
 from functools import lru_cache
 
 import numpy as np
@@ -28,17 +28,21 @@ logger = logging.getLogger(__name__)
 
 CARD_W = 734
 CARD_H = 1024
+PAD_ART_W = 124
+PAD_ART_H = 130
+
 
 # Drop shadow settings (locked in — multiply blend, bottom-right)
-SHADOW_RADIUS   = 2
+SHADOW_RADIUS = 2
 SHADOW_OFFSET_X = 2
 SHADOW_OFFSET_Y = 2
-SHADOW_COLOR    = (0, 0, 0)
+SHADOW_COLOR = (0, 0, 0)
 
 
 # ---------------------------------------------------------------------------
 # Card frame loading (cached — only parsed once per run)
 # ---------------------------------------------------------------------------
+
 
 @lru_cache(maxsize=1)
 def load_card_frame(svg_path: str) -> Image.Image:
@@ -69,6 +73,7 @@ def load_card_frame(svg_path: str) -> Image.Image:
 # Drop shadow
 # ---------------------------------------------------------------------------
 
+
 def apply_drop_shadow(
     card_img: Image.Image,
     radius: int = SHADOW_RADIUS,
@@ -95,26 +100,43 @@ def apply_drop_shadow(
     shadow_blurred = shadow_canvas.filter(ImageFilter.GaussianBlur(radius))
 
     # Build shadow RGBA layer
+    # shadow_layer = Image.new("RGBA", (canvas_w, canvas_h), shadow_color + (0,))
+    # shadow_layer.putalpha(shadow_blurred)
     shadow_layer = Image.new("RGBA", (canvas_w, canvas_h), shadow_color + (0,))
     shadow_layer.putalpha(shadow_blurred)
 
     # Multiply shadow onto a white background then alpha-composite card on top
+    # white_bg = Image.new("RGBA", (canvas_w, canvas_h), (255, 255, 255, 0))
     white_bg = Image.new("RGBA", (canvas_w, canvas_h), (255, 255, 255, 255))
 
-    bg_arr     = np.array(white_bg).astype(float)
+    # bg_arr = np.array(white_bg).astype(float)
+    # shadow_arr = np.array(shadow_layer).astype(float)
+    bg_arr = np.array(white_bg).astype(float)
     shadow_arr = np.array(shadow_layer).astype(float)
 
+    # shadow_a = shadow_arr[:, :, 3:4] / 255.0
+    # mult_rgb = bg_arr[:, :, :3] * shadow_arr[:, :, :3] / 255.0
+    # blended = bg_arr[:, :, :3] * (1 - shadow_a) + mult_rgb * shadow_a
+    # bg_arr[:, :, 3] = shadow_arr[:, :, 3]
     shadow_a = shadow_arr[:, :, 3:4] / 255.0
     mult_rgb = bg_arr[:, :, :3] * shadow_arr[:, :, :3] / 255.0
-    blended  = bg_arr[:, :, :3] * (1 - shadow_a) + mult_rgb * shadow_a
+    blended = bg_arr[:, :, :3] * (1 - shadow_a) + mult_rgb * shadow_a
     bg_arr[:, :, :3] = blended
 
+    # base = Image.fromarray(bg_arr.astype(np.uint8))
+    base = shadow_layer
     base = Image.fromarray(bg_arr.astype(np.uint8))
 
     # Place the card on the canvas
+    # card_canvas = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
+    # card_canvas.paste(card_img, (pad, pad))
     card_canvas = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
     card_canvas.paste(card_img, (pad, pad))
 
+    # result = Image.alpha_composite(base.convert("RGBA"), card_canvas)
+    # Composite: Card on top of Shadow
+    return Image.alpha_composite(base, card_canvas)
+    # return result
     result = Image.alpha_composite(base.convert("RGBA"), card_canvas)
     return result
 
@@ -122,6 +144,7 @@ def apply_drop_shadow(
 # ---------------------------------------------------------------------------
 # Main composite function
 # ---------------------------------------------------------------------------
+
 
 def composite_card(
     art_path: pathlib.Path,
@@ -149,18 +172,31 @@ def composite_card(
         True on success, False on error.
     """
     try:
-        art_path    = pathlib.Path(art_path)
-        svg_path    = pathlib.Path(svg_path)
+        art_path = pathlib.Path(art_path)
+        svg_path = pathlib.Path(svg_path)
         output_path = pathlib.Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
         # 1. Load and resize art to fill card dimensions
+        cw = CARD_W - PAD_ART_W
+        ch = CARD_H - PAD_ART_H
+        w2 = PAD_ART_W / 2
+        h2 = PAD_ART_H / 2
         art = Image.open(art_path).convert("RGBA")
+        art_r1 = art.resize((cw, ch), Image.LANCZOS)
+        art_resized = Image.new("RGBA", (CARD_W, CARD_H), (255, 255, 255, 0))
+        art_resized.paste(art_r1, (int(w2), int(h2)))
         art_resized = art.resize((CARD_W, CARD_H), Image.LANCZOS)
 
         # 2. Load the card frame (cached)
         frame = load_card_frame(str(svg_path))
 
+        # # 3. Composite: art behind, frame on top
+        # composite = Image.alpha_composite(art_resized, frame)
+
+        # 3. Composite: frame behidn, art on top
+        # composite = Image.alpha_composite(frame, art_resized)
+        composite = Image.alpha_composite(frame, art_resized)
         # 3. Composite: art behind, frame on top
         composite = Image.alpha_composite(art_resized, frame)
 
@@ -170,6 +206,7 @@ def composite_card(
 
         # 5. Save
         # Convert to RGB for final PNG (white background for any remaining alpha)
+        final = Image.new("RGBA", composite.size, (255, 255, 255, 0))
         final = Image.new("RGB", composite.size, (255, 255, 255))
         final.paste(composite, mask=composite.split()[3])
         final.save(output_path, "PNG", optimize=True)
@@ -189,10 +226,11 @@ def composite_card(
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     import sys
+
     sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 
     root = pathlib.Path(__file__).parent.parent
-    svg  = root / "assets" / "cardface.svg"
+    svg = root / "assets" / "cardface.svg"
 
     # Use a solid colour test image as stand-in for generated art
     test_art = root / "output" / "test_art.png"
