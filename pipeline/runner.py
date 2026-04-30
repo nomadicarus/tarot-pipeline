@@ -28,11 +28,12 @@ from tqdm import tqdm
 ROOT = pathlib.Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
-from prompts.builder import build_prompt
-from pipeline.generator import generate_card_image, get_quota_tracker
+from config.settings import API_CALL_DELAY as _API_CALL_DELAY
+from config.settings import DAILY_LIMIT, MODEL
 from pipeline.compositor import composite_card
+from pipeline.generator import generate_card_image, get_quota_tracker
 from pipeline.quota import QuotaExceededError
-from config.settings import MODEL, DAILY_LIMIT, API_CALL_DELAY as _API_CALL_DELAY
+from prompts.builder import build_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -40,9 +41,9 @@ logger = logging.getLogger(__name__)
 # Config paths
 # ---------------------------------------------------------------------------
 
-CARDS_JSON  = ROOT / "config" / "cards.json"
-DECKS_JSON  = ROOT / "config" / "decks.json"
-SVG_FRAME   = ROOT / "assets" / "cardface.svg"
+CARDS_JSON = ROOT / "config" / "cards.json"
+DECKS_JSON = ROOT / "config" / "decks.json"
+SVG_FRAME = ROOT / "assets" / "cardface.svg"
 
 # Inter-request delay — read from config/settings.py
 # Free tier (~3 RPM): 20s. Paid tier (~10 RPM): 8s.
@@ -53,13 +54,14 @@ API_CALL_DELAY = _API_CALL_DELAY
 # Data structures
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class CardResult:
-    deck_id:   str
+    deck_id: str
     card_name: str
-    success:   bool
-    skipped:   bool = False
-    error:     Optional[str] = None
+    success: bool
+    skipped: bool = False
+    error: Optional[str] = None
 
 
 @dataclass
@@ -67,13 +69,20 @@ class RunSummary:
     results: list[CardResult] = field(default_factory=list)
 
     @property
-    def total(self):     return len(self.results)
+    def total(self):
+        return len(self.results)
+
     @property
-    def succeeded(self): return sum(1 for r in self.results if r.success)
+    def succeeded(self):
+        return sum(1 for r in self.results if r.success)
+
     @property
-    def skipped(self):   return sum(1 for r in self.results if r.skipped)
+    def skipped(self):
+        return sum(1 for r in self.results if r.skipped)
+
     @property
-    def failed(self):    return sum(1 for r in self.results if not r.success and not r.skipped)
+    def failed(self):
+        return sum(1 for r in self.results if not r.success and not r.skipped)
 
     def print_report(self):
         print("\n" + "=" * 60)
@@ -87,13 +96,16 @@ class RunSummary:
             print("\nFailed cards:")
             for r in self.results:
                 if not r.success and not r.skipped:
-                    print(f"  [{r.deck_id}] {r.card_name} — {r.error or 'unknown error'}")
+                    print(
+                        f"  [{r.deck_id}] {r.card_name} — {r.error or 'unknown error'}"
+                    )
         print("=" * 60)
 
 
 # ---------------------------------------------------------------------------
 # Card iteration helper
 # ---------------------------------------------------------------------------
+
 
 def iter_cards(cards: dict):
     """Yield all 78 card dicts in order: major arcana then minor arcana by suit."""
@@ -110,6 +122,7 @@ def card_filename(card: dict) -> str:
 # ---------------------------------------------------------------------------
 # Single card pipeline
 # ---------------------------------------------------------------------------
+
 
 def process_card(
     card: dict,
@@ -130,20 +143,21 @@ def process_card(
         True if card was successfully processed or skipped, False on failure.
     """
     deck_out_dir = ROOT / deck["output_dir"]
-    raw_dir      = deck_out_dir / "raw"
+    raw_dir = deck_out_dir / "raw"
     raw_dir.mkdir(parents=True, exist_ok=True)
 
-    filename    = card_filename(card)
-    raw_path    = raw_dir / filename
-    final_path  = deck_out_dir / filename
+    filename = card_filename(card)
+    raw_path = raw_dir / filename
+    final_path = deck_out_dir / filename
 
     # --- Skip if final output already exists ---
     if final_path.exists() and not force:
         logger.debug(f"Skipping (exists): [{deck['id']}] {card['name']}")
-        summary.results.append(CardResult(
-            deck_id=deck["id"], card_name=card["name"],
-            success=True, skipped=True
-        ))
+        summary.results.append(
+            CardResult(
+                deck_id=deck["id"], card_name=card["name"], success=True, skipped=True
+            )
+        )
         return True
 
     # --- Step 1: Generate raw art (skip if raw already exists) ---
@@ -153,10 +167,14 @@ def process_card(
 
         ok = generate_card_image(prompt, raw_path)
         if not ok:
-            summary.results.append(CardResult(
-                deck_id=deck["id"], card_name=card["name"],
-                success=False, error="API generation failed"
-            ))
+            summary.results.append(
+                CardResult(
+                    deck_id=deck["id"],
+                    card_name=card["name"],
+                    success=False,
+                    error="API generation failed",
+                )
+            )
             return False
 
         # Polite delay between API calls
@@ -167,21 +185,26 @@ def process_card(
     # --- Step 2: Composite art + frame ---
     ok = composite_card(raw_path, SVG_FRAME, final_path)
     if not ok:
-        summary.results.append(CardResult(
-            deck_id=deck["id"], card_name=card["name"],
-            success=False, error="Compositing failed"
-        ))
+        summary.results.append(
+            CardResult(
+                deck_id=deck["id"],
+                card_name=card["name"],
+                success=False,
+                error="Compositing failed",
+            )
+        )
         return False
 
-    summary.results.append(CardResult(
-        deck_id=deck["id"], card_name=card["name"], success=True
-    ))
+    summary.results.append(
+        CardResult(deck_id=deck["id"], card_name=card["name"], success=True)
+    )
     return True
 
 
 # ---------------------------------------------------------------------------
 # Main runner
 # ---------------------------------------------------------------------------
+
 
 def run(
     deck_ids: Optional[list[str]] = None,
@@ -220,7 +243,9 @@ def run(
     tracker.sync_with_server()
     tracker.print_status()
 
-    print(f"\nTarot Pipeline — {len(all_decks)} deck(s) × {len(all_cards)} card(s) = {total_jobs} images\n")
+    print(
+        f"\nTarot Pipeline — {len(all_decks)} deck(s) × {len(all_cards)} card(s) = {total_jobs} images\n"
+    )
     print(f"  Model       : {MODEL}")
     print(f"  Daily limit : {tracker.daily_limit}  (change in config/settings.py)")
     print(f"  Used today  : {tracker.effective_count}\n")
@@ -236,11 +261,13 @@ def run(
                     summary.print_report()
                     return summary
                 pbar.update(1)
-                pbar.set_postfix({
-                    "ok": summary.succeeded,
-                    "skip": summary.skipped,
-                    "fail": summary.failed,
-                })
+                pbar.set_postfix(
+                    {
+                        "ok": summary.succeeded,
+                        "skip": summary.skipped,
+                        "fail": summary.failed,
+                    }
+                )
 
     summary.print_report()
     return summary
@@ -255,21 +282,21 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Tarot deck image pipeline")
     parser.add_argument(
-        "--decks", nargs="*",
+        "--decks",
+        nargs="*",
         choices=["lego_explosive", "thoth", "claymation"],
-        help="Which deck(s) to generate (default: all)"
+        help="Which deck(s) to generate (default: all)",
     )
     parser.add_argument(
-        "--cards", nargs="*",
-        help="Limit to specific card names e.g. 'The Fool' 'The Magus'"
+        "--cards",
+        nargs="*",
+        help="Limit to specific card names e.g. 'The Fool' 'The Magus'",
     )
     parser.add_argument(
-        "--force", action="store_true",
-        help="Regenerate even if output already exists"
+        "--force", action="store_true", help="Regenerate even if output already exists"
     )
     parser.add_argument(
-        "--log-level", default="INFO",
-        choices=["DEBUG", "INFO", "WARNING", "ERROR"]
+        "--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"]
     )
     args = parser.parse_args()
 

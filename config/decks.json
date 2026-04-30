@@ -4,22 +4,106 @@
       "id": "lego_explosive",
       "name": "Lego Explosive Media",
       "output_dir": "output/lego_explosive",
-      "style_prefix": "LEGO minifigure characters, Explosive Media satirical graphic novel art style, bold flat colours, sharp black ink outlines, anti-war political cartoon aesthetic, American military-industrial complex satire, high contrast primary colours, comic book panel composition, irreverent and subversive tone",
-      "style_suffix": "LEGO brick textures visible, yellow LEGO hands and faces, bold graphic design, no photorealism"
+      "technical_parameters": {
+        "aspect_ratio": "741:1024",
+        "rendering_engine": "Graphic Novel / Flat Cel Animation"
+      },
+      "rendering_engine_prefix": "Graphic Novel / Flat Cel Animation style.",
+      "master_prompt_template": "A LEGO minifigure tarot card . LEGO brick textures visible throughout. Yellow LEGO hands and faces. Bold flat primary colours with sharp black ink outlines. Explosive Media satirical graphic novel art style — anti-war political cartoon aesthetic, American military-industrial complex satire. High contrast. Comic book panel composition. Irreverent and subversive tone.",
+      "technical_suffix": "High fidelity, professionally colour graded, sharp focus, 8k resolution.",
+      "style_tags": [
+        "LEGO minifigure",
+        "Explosive Media",
+        "satirical graphic novel",
+        "flat cel animation",
+        "anti-war political cartoon",
+        "bold primary colours",
+        "sharp ink outlines",
+        "comic book composition"
+      ],
+      "negative_prompts": [
+        "photorealistic",
+        "smooth 3D render",
+        "watercolour",
+        "traditional tarot art",
+        "Rider-Waite imagery",
+        "serious tone",
+        "muted colours",
+        "blurry",
+        "distorted text"
+      ]
     },
     {
       "id": "thoth",
       "name": "Thoth Tarot",
       "output_dir": "output/thoth",
-      "style_prefix": "Thoth tarot card illustration, Lady Frieda Harris projective geometry painting style, esoteric sacred geometry, rich jewel-tone colour palette, Aleister Crowley occult symbolism, art deco mystical illustration, luminous translucent overlapping geometric forms, deeply symbolic",
-      "style_suffix": "projective geometry lines, luminous and transcendent, museum quality occult illustration"
+      "technical_parameters": {
+        "aspect_ratio": "741:1024",
+        "rendering_engine": "Projective Geometry / Watercolor and Airbrush"
+      },
+      "rendering_engine_prefix": "Projective Geometry / Watercolor and Airbrush rendering.",
+      "master_prompt_template": "A tarot card in the authentic Thoth Tarot style of Lady Frieda Harris. Mixed-media painting (oil, acrylic, and possibly colored pencil on textured paper), technique reflecting Stained-glass effect, linear and geometric fragmentation, faceted planes. The image is a masterpiece of occult symbolism composed of geometric forms and radiant lines. An intricate painting using translucent watercolour and smooth airbrush techniques — luminous overlapping layers creating depth through transparency and shifting light. Surrealist and highly intellectual. Projective geometry governs the composition: sharp intersecting lines of light, radiating power centres, complex mathematical structures, dense matrix of sacred geometry, interlocking circles, and multi-dimensional planes folding into one another. Flashing colours — highly saturated contrasting hues creating a shimmering energetic effect.Sharp precise lines, esoteric glyphs, cosmic power.",
+      "technical_suffix": "High-resolution, fine art texture, sharp focus, 8k resolution.",
+      "style_tags": [
+        "Lady Frieda Harris style",
+        "Projective Geometry",
+        "Thoth Tarot",
+        "Surrealist occultism",
+        "Translucent layers",
+        "High relief wood carving / Bas-relief",
+        "Airbrush and watercolour",
+        "Art Deco symmetry",
+        "Esoteric symbolism",
+        "Flashing colors"
+      ],
+      "negative_prompts": [
+        "claymation",
+        "3D textures",
+        "Rider-Waite-Smith style",
+        "flat colours",
+        "muddy textures",
+        "thick impasto",
+        "hand-drawn sketches",
+        "messy lines",
+        "LEGO",
+        "photorealistic",
+        "distorted text"
+      ]
     },
     {
       "id": "claymation",
       "name": "Claymation Thoth",
       "output_dir": "output/claymation",
-      "style_prefix": "claymation stop-motion animation style, hand-sculpted clay figures with visible fingerprints and clay texture, Wallace and Gromit Aardman Animations aesthetic, warm diffuse studio lighting, tactile physical quality, Thoth tarot sacred geometry and occult symbolism preserved, clay models of esoteric symbols",
-      "style_suffix": "visibly hand-made clay surfaces, soft warm studio lighting, charming and slightly imperfect clay craftsmanship"
+      "technical_parameters": {
+        "aspect_ratio": "741:1024",
+        "rendering_engine": "Physical Render / Macro Photography"
+      },
+      "rendering_engine_prefix": "Physical Render / Macro Photography",
+      "master_prompt_template": "A macro photograph of a handcrafted claymation relief carving tarot card. The central figure is sculpted in colourful polymer clay. High-detail handcrafted claymation relief carving — textures show subtle thumbprints, tool marks, and a matte porous finish typical of polymer clay or terracotta. Macro-style lighting with soft shadows highlighting the 3D depth and tactile quality of raised figures and recessed grooves. Background is a dense mosaic of geometric patterns and celestial spheres in the style of Frieda Harris: sacred geometry, interlocking circles, overlapping triangles, stylised Egyptian and Hebrew esoteric symbols. Rich palette of deep blues, golds, and burnt oranges.Bas-relief depth.",
+      "technical_suffix": "Sharp focus on clay textures, tool marks, and 3D depth. 8k resolution, cinematic lighting.",
+      "style_tags": [
+        "claymation",
+        "stop-motion aesthetic",
+        "Thoth tarot",
+        "sacred geometry",
+        "Art Deco",
+        "tactile relief",
+        "macro photography",
+        "Frieda Harris style",
+        "bas-relief",
+        "polymer clay"
+      ],
+      "negative_prompts": [
+        "smooth digital painting",
+        "flat 2D illustration",
+        "shiny plastic",
+        "blurry background",
+        "traditional Rider-Waite imagery",
+        "distorted text",
+        "photorealistic human skin",
+        "clean smooth surfaces",
+        "watercolour"
+      ]
     }
   ]
 }
