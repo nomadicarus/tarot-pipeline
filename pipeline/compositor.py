@@ -1,5 +1,5 @@
 """
-compositor.py — card compositing stage only.
+compositor.py — card compositing stage only.1
 
 Reads raw PNGs from output/{deck}/raw/, filters by iTXt metadata,
 composites each with the card frame SVG, applies drop shadow, saves
@@ -44,6 +44,7 @@ from PIL import Image, ImageFilter
 logger = logging.getLogger(__name__)
 
 import sys
+
 ROOT = pathlib.Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
@@ -53,11 +54,11 @@ from pipeline.manifest import filter_raw, read_metadata
 # ★  SIZING & PADDING VARIABLES — adjust here  ★
 # ─────────────────────────────────────────────────────────────────
 
-CARD_W = 734        # card frame canvas width (px)
-CARD_H = 1024       # card frame canvas height (px)
+CARD_W = 734  # card frame canvas width (px)
+CARD_H = 1024  # card frame canvas height (px)
 
-PAD_ART_W = 30      # horizontal padding inside frame (px each side)
-PAD_ART_H = 30      # vertical padding inside frame (px each side)
+PAD_ART_W = 30  # horizontal padding inside frame (px each side)
+PAD_ART_H = 30  # vertical padding inside frame (px each side)
 
 # Art area derived from padding — do not edit directly
 ART_W = CARD_W - (PAD_ART_W * 2)
@@ -71,13 +72,14 @@ ART_OFFSET_Y = PAD_ART_H
 # ★  DROP SHADOW — locked per governance  ★
 # ─────────────────────────────────────────────────────────────────
 
-SHADOW_RADIUS   = 2     # blur radius (px)
-SHADOW_OFFSET_X = 2     # x offset (px) — positive = right
-SHADOW_OFFSET_Y = 2     # y offset (px) — positive = down
-SHADOW_COLOR    = (0, 0, 0)
+SHADOW_RADIUS = 2  # blur radius (px)
+SHADOW_OFFSET_X = 2  # x offset (px) — positive = right
+SHADOW_OFFSET_Y = 2  # y offset (px) — positive = down
+SHADOW_COLOR = (0, 0, 0)
 
 
 # ── card frame loading ────────────────────────────────────────────────────
+
 
 @lru_cache(maxsize=1)
 def load_card_frame(svg_path: str) -> Image.Image:
@@ -86,7 +88,7 @@ def load_card_frame(svg_path: str) -> Image.Image:
     Cached — parsed once per run.
     """
     svg_text = pathlib.Path(svg_path).read_text()
-    match    = re.search(r'data:image/png;base64,([^"\']+)', svg_text)
+    match = re.search(r'data:image/png;base64,([^"\']+)', svg_text)
     if not match:
         raise ValueError(f"No embedded PNG found in SVG: {svg_path}")
 
@@ -98,31 +100,34 @@ def load_card_frame(svg_path: str) -> Image.Image:
 
 # ── drop shadow ───────────────────────────────────────────────────────────
 
+
 def apply_drop_shadow(card_img: Image.Image) -> Image.Image:
     """
     Apply multiply-blend drop shadow (locked settings per governance).
     Returns expanded RGBA image with shadow on transparent background.
     """
-    pad      = SHADOW_RADIUS * 3 + max(abs(SHADOW_OFFSET_X), abs(SHADOW_OFFSET_Y)) + 4
-    W, H     = card_img.size
+    pad = SHADOW_RADIUS * 3 + max(abs(SHADOW_OFFSET_X), abs(SHADOW_OFFSET_Y)) + 4
+    W, H = card_img.size
     canvas_w = W + pad * 2
     canvas_h = H + pad * 2
 
     # Build blurred shadow from card alpha
     shadow_canvas = Image.new("L", (canvas_w, canvas_h), 0)
-    shadow_canvas.paste(card_img.split()[3], (pad + SHADOW_OFFSET_X, pad + SHADOW_OFFSET_Y))
+    shadow_canvas.paste(
+        card_img.split()[3], (pad + SHADOW_OFFSET_X, pad + SHADOW_OFFSET_Y)
+    )
     shadow_blurred = shadow_canvas.filter(ImageFilter.GaussianBlur(SHADOW_RADIUS))
 
     shadow_layer = Image.new("RGBA", (canvas_w, canvas_h), SHADOW_COLOR + (0,))
     shadow_layer.putalpha(shadow_blurred)
 
     # Multiply shadow onto white base
-    white_bg   = Image.new("RGBA", (canvas_w, canvas_h), (255, 255, 255, 255))
-    bg_arr     = np.array(white_bg).astype(float)
+    white_bg = Image.new("RGBA", (canvas_w, canvas_h), (255, 255, 255, 255))
+    bg_arr = np.array(white_bg).astype(float)
     shadow_arr = np.array(shadow_layer).astype(float)
-    shadow_a   = shadow_arr[:, :, 3:4] / 255.0
-    mult_rgb   = bg_arr[:, :, :3] * shadow_arr[:, :, :3] / 255.0
-    blended    = bg_arr[:, :, :3] * (1 - shadow_a) + mult_rgb * shadow_a
+    shadow_a = shadow_arr[:, :, 3:4] / 255.0
+    mult_rgb = bg_arr[:, :, :3] * shadow_arr[:, :, :3] / 255.0
+    blended = bg_arr[:, :, :3] * (1 - shadow_a) + mult_rgb * shadow_a
     bg_arr[:, :, :3] = blended
     base = Image.fromarray(bg_arr.astype(np.uint8))
 
@@ -134,11 +139,12 @@ def apply_drop_shadow(card_img: Image.Image) -> Image.Image:
 
 # ── single card composite ─────────────────────────────────────────────────
 
+
 def composite_card(
-    raw_path:    pathlib.Path,
-    svg_path:    pathlib.Path,
+    raw_path: pathlib.Path,
+    svg_path: pathlib.Path,
     output_path: pathlib.Path,
-    add_shadow:  bool = True,
+    add_shadow: bool = True,
 ) -> bool:
     """
     Composite a single raw PNG with the card frame.
@@ -159,13 +165,13 @@ def composite_card(
         True on success, False on error.
     """
     try:
-        raw_path    = pathlib.Path(raw_path)
+        raw_path = pathlib.Path(raw_path)
         output_path = pathlib.Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Load frame (layer 0) and art (layer 1)
         frame = load_card_frame(str(svg_path))
-        art   = Image.open(raw_path).convert("RGBA")
+        art = Image.open(raw_path).convert("RGBA")
 
         # Create canvas — frame first (layer 0)
         canvas = Image.new("RGBA", (CARD_W, CARD_H), (0, 0, 0, 0))
@@ -195,17 +201,18 @@ def composite_card(
 
 # ── batch composite ───────────────────────────────────────────────────────
 
+
 def composite_batch(
-    raw_dir:    pathlib.Path,
+    raw_dir: pathlib.Path,
     output_dir: pathlib.Path,
-    svg_path:   pathlib.Path,
-    deck_id:    Optional[str]  = None,
-    deck_type:  Optional[str]  = None,
-    arcana:     Optional[str]  = None,
-    suit:       Optional[str]  = None,
-    card_name:  Optional[str]  = None,
+    svg_path: pathlib.Path,
+    deck_id: Optional[str] = None,
+    deck_type: Optional[str] = None,
+    arcana: Optional[str] = None,
+    suit: Optional[str] = None,
+    card_name: Optional[str] = None,
     card_names: Optional[list] = None,
-    force:      bool           = False,
+    force: bool = False,
 ) -> tuple:
     """
     Composite multiple raw PNGs filtered by iTXt metadata.
@@ -227,7 +234,7 @@ def composite_batch(
     Returns:
         (succeeded, skipped, failed) counts
     """
-    raw_dir    = pathlib.Path(raw_dir)
+    raw_dir = pathlib.Path(raw_dir)
     output_dir = pathlib.Path(output_dir)
 
     # Filter raw files by metadata
