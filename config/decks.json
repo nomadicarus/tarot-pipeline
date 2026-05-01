@@ -9,7 +9,7 @@
         "rendering_engine": "Graphic Novel / Flat Cel Animation"
       },
       "rendering_engine_prefix": "Graphic Novel / Flat Cel Animation style.",
-      "master_prompt_template": "A LEGO minifigure tarot card numbered {card_number} titled '{card_name}'. {card_description} LEGO brick textures visible throughout. Yellow LEGO hands and faces. Bold flat primary colours with sharp black ink outlines. Explosive Media satirical graphic novel art style — anti-war political cartoon aesthetic, American military-industrial complex satire. High contrast. Comic book panel composition. Irreverent and subversive tone. {technical_suffix}",
+      "master_prompt_template": "A LEGO minifigure tarot card . LEGO brick textures visible throughout. Yellow LEGO hands and faces. Bold flat primary colours with sharp black ink outlines. Explosive Media satirical graphic novel art style — anti-war political cartoon aesthetic, American military-industrial complex satire. High contrast. Comic book panel composition. Irreverent and subversive tone.",
       "technical_suffix": "High fidelity, professionally colour graded, sharp focus, 8k resolution.",
       "style_tags": [
         "LEGO minifigure",
@@ -39,10 +39,10 @@
       "output_dir": "output/thoth",
       "technical_parameters": {
         "aspect_ratio": "741:1024",
-        "rendering_engine": "Projective Geometry / Watercolor and Airbrush"
+        "rendering_engine": "Projective Geometry / Watercolor"
       },
-      "rendering_engine_prefix": "Projective Geometry / Watercolor and Airbrush rendering.",
-      "master_prompt_template": "A tarot card in the authentic Thoth Tarot style of Lady Frieda Harris, numbered {card_number} titled '{card_name}'. {card_description} The image is a masterpiece of occult symbolism composed of geometric forms and radiant lines. An intricate painting using translucent watercolour and smooth airbrush techniques — luminous overlapping layers creating depth through transparency and shifting light. Surrealist and highly intellectual. Projective geometry governs the composition: sharp intersecting lines of light, radiating power centres, complex mathematical structures, dense matrix of sacred geometry, interlocking circles, and multi-dimensional planes folding into one another. Flashing colours — highly saturated contrasting hues creating a shimmering energetic effect. Key symbols: {symbols}. Colour palette: {colours}. Contained within the signature Thoth white Art Deco architectural border. Sharp precise lines, esoteric glyphs, cosmic power. {technical_suffix}",
+      "rendering_engine_prefix": "Projective Geometry / Watercolor",
+      "master_prompt_template": "A tarot card in the authentic Thoth Tarot style of Lady Frieda Harris. Technique reflecting Stained-glass effect, linear and geometric fragmentation, faceted planes but the medium is translucent watercolour and smooth airbrush, art deco style, luminous overlapping layers creating depth through transparency and shifting light. The image is a masterpiece of occult symbolism composed of geometric forms and radiant lines. Surrealist and highly intellectual. Projective geometry governs the composition: sharp intersecting lines of light, radiating power centres, complex mathematical structures, dense matrix of sacred geometry, interlocking circles, and multi-dimensional planes folding into one another. Flashing colours — highly saturated contrasting hues creating a shimmering energetic effect.Sharp precise lines, esoteric glyphs, cosmic power.",
       "technical_suffix": "High-resolution, fine art texture, sharp focus, 8k resolution.",
       "style_tags": [
         "Lady Frieda Harris style",
@@ -50,6 +50,7 @@
         "Thoth Tarot",
         "Surrealist occultism",
         "Translucent layers",
+        "High relief wood carving / Bas-relief",
         "Airbrush and watercolour",
         "Art Deco symmetry",
         "Esoteric symbolism",
@@ -77,8 +78,8 @@
         "aspect_ratio": "741:1024",
         "rendering_engine": "Physical Render / Macro Photography"
       },
-      "rendering_engine_prefix": "Physical Render / Macro Photography of handcrafted clay.",
-      "master_prompt_template": "A macro photograph of a handcrafted claymation tarot card numbered {card_number} titled '{card_name}'. The central figure is {card_description} sculpted in colourful polymer clay. High-detail handcrafted claymation relief carving — textures show subtle thumbprints, tool marks, and a matte porous finish typical of polymer clay or terracotta. Macro-style lighting with soft shadows highlighting the 3D depth and tactile quality of raised figures and recessed grooves. Background is a dense mosaic of geometric patterns and celestial spheres in the style of Frieda Harris: sacred geometry, interlocking circles, overlapping triangles, stylised Egyptian and Hebrew esoteric symbols. Key symbols: {symbols}. Rich palette of deep blues, golds, and burnt oranges with {colours}. Rigid symmetrical white border with Art Deco architectural lines in the Thoth Aeon style. Bas-relief depth. {technical_suffix}",
+      "rendering_engine_prefix": "Physical Render / Macro Photography",
+      "master_prompt_template": "A macro photograph of a handcrafted claymation relief carving tarot card. The central figure is sculpted in colourful polymer clay. High-detail handcrafted claymation relief carving — textures show subtle thumbprints, tool marks, and a matte porous finish typical of polymer clay or terracotta. Macro-style lighting with soft shadows highlighting the 3D depth and tactile quality of raised figures and recessed grooves. Background is a dense mosaic of geometric patterns and celestial spheres in the style of Frieda Harris: sacred geometry, interlocking circles, overlapping triangles, stylised Egyptian and Hebrew esoteric symbols. Rich palette of deep blues, golds, and burnt oranges.Bas-relief depth.",
       "technical_suffix": "Sharp focus on clay textures, tool marks, and 3D depth. 8k resolution, cinematic lighting.",
       "style_tags": [
         "claymation",
