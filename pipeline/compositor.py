@@ -1,5 +1,5 @@
 """
-compositor.py — card compositing stage only.1
+compositor.py — card compositing stage only.
 
 Reads raw PNGs from output/{deck}/raw/, filters by iTXt metadata,
 composites each with the card frame SVG, applies drop shadow, saves
