@@ -29,23 +29,23 @@ API_REGION:   Endpoint region. "us-central1" avoids region-locking issues.
 # ─────────────────────────────────────────────────────────────────
 
 MODEL = "gemini-2.0-flash-preview-image-generation"
-#MODEL = "gemini-3.1-flash-image-preview"
-#MODEL = "gemini-3-pro-image-preview"
+# MODEL = "gemini-3.1-flash-image-preview"
+# MODEL = "gemini-3-pro-image-preview"
 
-DAILY_LIMIT: int = 500          # requests per day (free tier ceiling)
-DAILY_SOFT_WARN: int = 450      # warn at this count (90% of free tier)
+DAILY_LIMIT: int = 100  # requests per day (free tier ceiling)
+DAILY_SOFT_WARN: int = 80  # warn at this count (90% of free tier)
 
-REQUIRE_CONFIRMATION_TO_EXCEED: bool = True   # STRONGLY RECOMMENDED: True
+REQUIRE_CONFIRMATION_TO_EXCEED: bool = True  # STRONGLY RECOMMENDED: True
 
-API_REGION: str = "us-central1"              # regional endpoint
+API_REGION: str = "us-central1"  # regional endpoint
 API_REGION_FALLBACK: str = "global"
 
 # ─────────────────────────────────────────────────────────────────
 #  Timing
 # ─────────────────────────────────────────────────────────────────
 
-QUOTA_TIMEZONE = "US/Pacific"   # PT — resets at midnight Pacific Time
-                                # UTC-8 standard / UTC-7 daylight saving
+QUOTA_TIMEZONE = "US/Pacific"  # PT — resets at midnight Pacific Time
+# UTC-8 standard / UTC-7 daylight saving
 
 # ─────────────────────────────────────────────────────────────────
 #  Rate limiting (inter-request delay)
@@ -57,6 +57,6 @@ QUOTA_TIMEZONE = "US/Pacific"   # PT — resets at midnight Pacific Time
 API_CALL_DELAY: float = 20.0
 
 # Retry settings
-MAX_RETRIES: int = 6
-RETRY_BASE_DELAY: float = 15.0   # exponential backoff base (seconds)
+MAX_RETRIES: int = 2
+RETRY_BASE_DELAY: float = 15.0  # exponential backoff base (seconds)
 RATE_LIMIT_RETRY_DELAY: float = 60.0  # extra wait on 429 (× attempt number)
