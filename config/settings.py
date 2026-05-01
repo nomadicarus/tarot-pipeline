@@ -32,8 +32,8 @@ MODEL = "gemini-2.0-flash-preview-image-generation"
 # MODEL = "gemini-3.1-flash-image-preview"
 # MODEL = "gemini-3-pro-image-preview"
 
-DAILY_LIMIT: int = 100  # requests per day (free tier ceiling)
-DAILY_SOFT_WARN: int = 80  # warn at this count (90% of free tier)
+DAILY_LIMIT: int = 500  # requests per day (free tier ceiling)
+DAILY_SOFT_WARN: int = 450  # warn at this count (90% of free tier)
 
 REQUIRE_CONFIRMATION_TO_EXCEED: bool = True  # STRONGLY RECOMMENDED: True
 
