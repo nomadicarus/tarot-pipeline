@@ -32,18 +32,18 @@ import json
 import logging
 import pathlib
 import sys
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
 
 # ── paths ──────────────────────────────────────────────────────────────────
-ROOT       = pathlib.Path(__file__).parent.parent
+ROOT = pathlib.Path(__file__).parent.parent
 STATE_FILE = ROOT / "config" / "quota_state.json"
 
 # ── PT timezone ────────────────────────────────────────────────────────────
-PT = ZoneInfo("America/Los_Angeles")   # handles DST automatically
+PT = ZoneInfo("America/Los_Angeles")  # handles DST automatically
 
 
 def _now_pt() -> datetime:
@@ -65,12 +65,21 @@ def _midnight_pt_reset_str() -> str:
 
 # ── exceptions ─────────────────────────────────────────────────────────────
 
+
 class QuotaExceededError(Exception):
     """Raised when the daily quota is exceeded and user declines to continue."""
+
+    pass
+
+
+class QuotaUserDeclined(QuotaExceededError):
+    """User declined to continue past quota limit."""
+
     pass
 
 
 # ── state schema ───────────────────────────────────────────────────────────
+
 
 def _empty_state(date_str: str) -> dict:
     return {
@@ -86,6 +95,7 @@ def _empty_state(date_str: str) -> dict:
 
 # ── QuotaTracker ───────────────────────────────────────────────────────────
 
+
 class QuotaTracker:
     """
     Tracks daily Gemini image API usage with server sync and guardrails.
@@ -93,18 +103,25 @@ class QuotaTracker:
 
     def __init__(self):
         # Import here to avoid circular imports
-        import sys, pathlib
+        import pathlib
+        import sys
+
         sys.path.insert(0, str(ROOT))
         from config.settings import (
-            DAILY_LIMIT, DAILY_SOFT_WARN, REQUIRE_CONFIRMATION_TO_EXCEED,
-            MODEL, API_REGION, API_REGION_FALLBACK,
+            API_REGION,
+            API_REGION_FALLBACK,
+            DAILY_LIMIT,
+            DAILY_SOFT_WARN,
+            MODEL,
+            REQUIRE_CONFIRMATION_TO_EXCEED,
         )
-        self.daily_limit               = DAILY_LIMIT
-        self.soft_warn                 = DAILY_SOFT_WARN
-        self.require_confirmation      = REQUIRE_CONFIRMATION_TO_EXCEED
-        self.model                     = MODEL
-        self.region                    = API_REGION
-        self.region_fallback           = API_REGION_FALLBACK
+
+        self.daily_limit = DAILY_LIMIT
+        self.soft_warn = DAILY_SOFT_WARN
+        self.require_confirmation = REQUIRE_CONFIRMATION_TO_EXCEED
+        self.model = MODEL
+        self.region = API_REGION
+        self.region_fallback = API_REGION_FALLBACK
 
         self._state = self._load()
 
@@ -171,7 +188,9 @@ class QuotaTracker:
         Falls back gracefully if unavailable (no billing, no permissions, etc.).
         """
         import os
+
         from dotenv import load_dotenv
+
         load_dotenv()
 
         api_key = os.environ.get("GEMINI_API_KEY")
@@ -183,7 +202,9 @@ class QuotaTracker:
             return False
 
         try:
-            import urllib.request, urllib.error, json as _json
+            import json as _json
+            import urllib.error
+            import urllib.request
 
             # Query the Gemini models list as a lightweight connectivity check,
             # then attempt to read usage from the quota/usage API.
@@ -199,14 +220,18 @@ class QuotaTracker:
                 f"https://generativelanguage.googleapis.com/v1beta/models"
                 f"?key={api_key}&pageSize=1"
             )
-            req = urllib.request.Request(usage_url, headers={"User-Agent": "tarot-pipeline/1.0"})
+            req = urllib.request.Request(
+                usage_url, headers={"User-Agent": "tarot-pipeline/1.0"}
+            )
             with urllib.request.urlopen(req, timeout=8) as resp:
                 # If we can reach the API, it's live — but granular per-day image
                 # generation counts aren't exposed in the public REST API without
                 # OAuth + Cloud Monitoring. We confirm connectivity only.
                 data = _json.loads(resp.read())
                 if "models" in data:
-                    logger.debug("Server reachable — granular usage not available via API key alone.")
+                    logger.debug(
+                        "Server reachable — granular usage not available via API key alone."
+                    )
                     # Mark as connectivity-confirmed but not full-sync
                     self._state["server_synced"] = False
                     self._state["last_sync_attempt"] = _now_pt().isoformat()
@@ -232,13 +257,17 @@ class QuotaTracker:
         """Call after every successful API image generation."""
         self._state["successful_requests"] += 1
         self._save()
-        logger.debug(f"Quota: {self.successful} successful / {self.failed} failed today (PT)")
+        logger.debug(
+            f"Quota: {self.successful} successful / {self.failed} failed today (PT)"
+        )
 
     def record_failure(self):
         """Call after every failed API call (including retries exhausted)."""
         self._state["failed_requests"] += 1
         self._save()
-        logger.debug(f"Quota: {self.successful} successful / {self.failed} failed today (PT)")
+        logger.debug(
+            f"Quota: {self.successful} successful / {self.failed} failed today (PT)"
+        )
 
     # ── guardrail ──────────────────────────────────────────────────────────
 
@@ -267,7 +296,7 @@ class QuotaTracker:
             self._print_banner(
                 f"⚠  QUOTA WARNING — {count}/{self.daily_limit} requests used today (PT) [{source}]\n"
                 f"   Approaching daily free-tier limit. {self.daily_limit - count} remaining.",
-                colour="yellow"
+                colour="yellow",
             )
 
         # ── hard limit ──
@@ -289,7 +318,9 @@ class QuotaTracker:
             )
 
             if not self.require_confirmation:
-                logger.warning(f"Quota exceeded ({count}/{self.daily_limit}) but REQUIRE_CONFIRMATION_TO_EXCEED=False. Continuing.")
+                logger.warning(
+                    f"Quota exceeded ({count}/{self.daily_limit}) but REQUIRE_CONFIRMATION_TO_EXCEED=False. Continuing."
+                )
                 print(msg)
                 return
 
@@ -301,9 +332,13 @@ class QuotaTracker:
 
             print(msg)
             try:
-                answer = input(
-                    "  Do you want to continue and exceed the daily limit? [yes/no]: "
-                ).strip().lower()
+                answer = (
+                    input(
+                        "  Do you want to continue and exceed the daily limit? [yes/no]: "
+                    )
+                    .strip()
+                    .lower()
+                )
             except (EOFError, KeyboardInterrupt):
                 print("\nAborted.")
                 raise QuotaExceededError("User aborted at quota gate.")
@@ -326,13 +361,19 @@ class QuotaTracker:
         # ── all clear ──
         remaining = self.daily_limit - count
         if remaining <= 20:
-            logger.info(f"Quota: {count}/{self.daily_limit} used ({remaining} remaining) [{source}]")
+            logger.info(
+                f"Quota: {count}/{self.daily_limit} used ({remaining} remaining) [{source}]"
+            )
 
     # ── reporting ──────────────────────────────────────────────────────────
 
     def print_status(self):
-        count  = self.effective_count
-        source = "server-synced" if self._state["server_synced"] else "local (no server sync)"
+        count = self.effective_count
+        source = (
+            "server-synced"
+            if self._state["server_synced"]
+            else "local (no server sync)"
+        )
         now_pt = _now_pt()
         print(
             f"\n{'─' * 52}\n"

@@ -40,31 +40,33 @@ from tqdm import tqdm
 ROOT = pathlib.Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
-from prompts.builder import build_prompt
-from pipeline.generator import generate_card_image, get_quota_tracker
+from config.settings import API_CALL_DELAY as _API_CALL_DELAY
+from config.settings import DAILY_LIMIT, MODEL
 from pipeline.compositor import composite_batch
+from pipeline.generator import generate_card_image, get_quota_tracker
 from pipeline.manifest import save_manifest
-from pipeline.quota import QuotaTracker, QuotaExceededError, QuotaUserDeclined
-from config.settings import MODEL, DAILY_LIMIT, API_CALL_DELAY as _API_CALL_DELAY
+from pipeline.quota import QuotaExceededError, QuotaTracker, QuotaUserDeclined
+from prompts.builder import build_prompt
 
 logger = logging.getLogger(__name__)
 
 CARDS_JSON = ROOT / "config" / "cards.json"
 DECKS_JSON = ROOT / "config" / "decks.json"
-SVG_FRAME  = ROOT / "assets" / "cardface.svg"
+SVG_FRAME = ROOT / "assets" / "cardface.svg"
 
 API_CALL_DELAY = _API_CALL_DELAY
 
 
 # ── data structures ───────────────────────────────────────────────────────
 
+
 @dataclass
 class CardResult:
-    deck_id:   str
+    deck_id: str
     card_name: str
-    success:   bool
-    skipped:   bool = False
-    error:     Optional[str] = None
+    success: bool
+    skipped: bool = False
+    error: Optional[str] = None
 
 
 @dataclass
@@ -72,13 +74,20 @@ class RunSummary:
     results: list = field(default_factory=list)
 
     @property
-    def total(self):     return len(self.results)
+    def total(self):
+        return len(self.results)
+
     @property
-    def succeeded(self): return sum(1 for r in self.results if r.success)
+    def succeeded(self):
+        return sum(1 for r in self.results if r.success)
+
     @property
-    def skipped(self):   return sum(1 for r in self.results if r.skipped)
+    def skipped(self):
+        return sum(1 for r in self.results if r.skipped)
+
     @property
-    def failed(self):    return sum(1 for r in self.results if not r.success and not r.skipped)
+    def failed(self):
+        return sum(1 for r in self.results if not r.success and not r.skipped)
 
     def print_report(self):
         print(f"\n{'═' * 52}")
@@ -98,6 +107,7 @@ class RunSummary:
 
 # ── card iteration ────────────────────────────────────────────────────────
 
+
 def iter_cards(cards: dict):
     yield from cards["major_arcana"]
     for suit_cards in cards["minor_arcana"].values():
@@ -110,12 +120,13 @@ def card_filename(card: dict) -> str:
 
 # ── generation stage ──────────────────────────────────────────────────────
 
+
 def run_generate(
-    deck_ids:   Optional[list] = None,
+    deck_ids: Optional[list] = None,
     card_names: Optional[list] = None,
-    force:      bool = False,
-    guardrail:  Optional[str] = None,
-    deck_type:  str = "tarot",
+    force: bool = False,
+    guardrail: Optional[str] = None,
+    deck_type: str = "tarot",
 ) -> RunSummary:
     """
     Generation stage — calls Gemini API, saves raw PNGs with iTXt metadata.
@@ -133,7 +144,7 @@ def run_generate(
         all_cards = [c for c in all_cards if c["name"].lower() in card_names_lower]
 
     total_jobs = len(all_decks) * len(all_cards)
-    summary    = RunSummary()
+    summary = RunSummary()
 
     # Quota setup
     tracker = get_quota_tracker()
@@ -142,7 +153,9 @@ def run_generate(
     tracker.sync_with_server()
     tracker.print_status()
 
-    print(f"\n── GENERATE ── {len(all_decks)} deck(s) × {len(all_cards)} card(s) = {total_jobs} images")
+    print(
+        f"\n── GENERATE ── {len(all_decks)} deck(s) × {len(all_cards)} card(s) = {total_jobs} images"
+    )
     print(f"   Model       : {MODEL}")
     print(f"   Daily limit : {tracker.daily_limit}  (config/settings.py)")
     print(f"   Used today  : {tracker.effective_count}\n")
@@ -165,24 +178,34 @@ def run_generate(
                 raw_path = raw_dir / filename
 
                 if raw_path.exists() and not force:
-                    summary.results.append(CardResult(
-                        deck_id=deck["id"], card_name=card["name"],
-                        success=True, skipped=True
-                    ))
+                    summary.results.append(
+                        CardResult(
+                            deck_id=deck["id"],
+                            card_name=card["name"],
+                            success=True,
+                            skipped=True,
+                        )
+                    )
                     pbar.update(1)
                     continue
 
                 try:
                     prompt = build_prompt(card, deck)
                     ok = generate_card_image(
-                        prompt, raw_path, card, deck,
+                        prompt,
+                        raw_path,
+                        card,
+                        deck,
                         deck_type=deck_type,
                     )
-                    summary.results.append(CardResult(
-                        deck_id=deck["id"], card_name=card["name"],
-                        success=ok,
-                        error=None if ok else "generation failed"
-                    ))
+                    summary.results.append(
+                        CardResult(
+                            deck_id=deck["id"],
+                            card_name=card["name"],
+                            success=ok,
+                            error=None if ok else "generation failed",
+                        )
+                    )
                     if ok:
                         time.sleep(API_CALL_DELAY)
 
@@ -192,11 +215,13 @@ def run_generate(
                     return summary
 
                 pbar.update(1)
-                pbar.set_postfix({
-                    "ok": summary.succeeded,
-                    "skip": summary.skipped,
-                    "fail": summary.failed,
-                })
+                pbar.set_postfix(
+                    {
+                        "ok": summary.succeeded,
+                        "skip": summary.skipped,
+                        "fail": summary.failed,
+                    }
+                )
 
         # Save manifest after each deck
         manifest_path = save_manifest(raw_dir)
@@ -208,20 +233,21 @@ def run_generate(
 
 # ── composite stage ───────────────────────────────────────────────────────
 
+
 def run_composite(
-    deck_ids:   Optional[list] = None,
+    deck_ids: Optional[list] = None,
     card_names: Optional[list] = None,
-    arcana:     Optional[str]  = None,
-    suit:       Optional[str]  = None,
-    deck_type:  Optional[str]  = None,
-    force:      bool = False,
+    arcana: Optional[str] = None,
+    suit: Optional[str] = None,
+    deck_type: Optional[str] = None,
+    force: bool = False,
 ) -> None:
     """
     Compositing stage — reads raw PNGs by iTXt metadata, composites with frame.
     Fully independent of generation — can be run at any time on existing /raw files.
     """
     decks_data = json.loads(DECKS_JSON.read_text())
-    all_decks  = decks_data["decks"]
+    all_decks = decks_data["decks"]
 
     if deck_ids:
         all_decks = [d for d in all_decks if d["id"] in deck_ids]
@@ -229,7 +255,7 @@ def run_composite(
     total_ok = total_skip = total_fail = 0
 
     for deck in all_decks:
-        raw_dir    = ROOT / deck["output_dir"] / "raw"
+        raw_dir = ROOT / deck["output_dir"] / "raw"
         output_dir = ROOT / deck["output_dir"]
 
         if not raw_dir.exists():
@@ -238,17 +264,17 @@ def run_composite(
 
         print(f"\n── Compositing: {deck['name']} ──")
         ok, skip, fail = composite_batch(
-            raw_dir    = raw_dir,
-            output_dir = output_dir,
-            svg_path   = SVG_FRAME,
-            deck_id    = deck["id"] if not deck_ids else None,
-            deck_type  = deck_type,
-            arcana     = arcana,
-            suit       = suit,
-            card_names = card_names,
-            force      = force,
+            raw_dir=raw_dir,
+            output_dir=output_dir,
+            svg_path=SVG_FRAME,
+            deck_id=deck["id"] if not deck_ids else None,
+            deck_type=deck_type,
+            arcana=arcana,
+            suit=suit,
+            card_names=card_names,
+            force=force,
         )
-        total_ok   += ok
+        total_ok += ok
         total_skip += skip
         total_fail += fail
         print(f"   ✓ {ok} composited  ↷ {skip} skipped  ✗ {fail} failed")
@@ -263,39 +289,61 @@ def run_composite(
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Tarot pipeline — generate and/or composite")
+    parser = argparse.ArgumentParser(
+        description="Tarot pipeline — generate and/or composite"
+    )
 
     # Stage flags
-    parser.add_argument("--generate",  action="store_true", help="Run generation stage")
-    parser.add_argument("--composite", action="store_true", help="Run compositing stage")
+    parser.add_argument("--generate", action="store_true", help="Run generation stage")
+    parser.add_argument(
+        "--composite", action="store_true", help="Run compositing stage"
+    )
 
     # Shared filters
-    parser.add_argument("--decks", nargs="*",
+    parser.add_argument(
+        "--decks",
+        nargs="*",
         choices=["lego_explosive", "thoth", "claymation"],
-        help="Deck(s) to process (default: all)")
-    parser.add_argument("--cards", nargs="*",
-        help="Card name(s) to process e.g. 'The Fool' 'The Magus'")
-    parser.add_argument("--force", action="store_true",
-        help="Re-generate/re-composite even if output exists")
+        help="Deck(s) to process (default: all)",
+    )
+    parser.add_argument(
+        "--cards", nargs="*", help="Card name(s) to process e.g. 'The Fool' 'The Magus'"
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Re-generate/re-composite even if output exists",
+    )
 
     # Composite-specific filters
-    parser.add_argument("--suit",   default=None,
+    parser.add_argument(
+        "--suit",
+        default=None,
         choices=["wands", "cups", "swords", "disks"],
-        help="Filter composite by suit (minor arcana only)")
-    parser.add_argument("--arcana", default=None,
+        help="Filter composite by suit (minor arcana only)",
+    )
+    parser.add_argument(
+        "--arcana",
+        default=None,
         choices=["major", "minor"],
-        help="Filter composite by arcana")
-    parser.add_argument("--deck-type", default="tarot",
-        help="Deck type for metadata (default: tarot)")
+        help="Filter composite by arcana",
+    )
+    parser.add_argument(
+        "--deck-type", default="tarot", help="Deck type for metadata (default: tarot)"
+    )
 
     # Generation options
-    parser.add_argument("--guardrail", default=None,
+    parser.add_argument(
+        "--guardrail",
+        default=None,
         choices=["preflight", "realtime", "off"],
-        help="Override guardrail mode for this run")
+        help="Override guardrail mode for this run",
+    )
 
     # Logging
-    parser.add_argument("--log-level", default="INFO",
-        choices=["DEBUG", "INFO", "WARNING", "ERROR"])
+    parser.add_argument(
+        "--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"]
+    )
 
     args = parser.parse_args()
 
@@ -311,19 +359,19 @@ if __name__ == "__main__":
 
     if args.generate:
         run_generate(
-            deck_ids   = args.decks,
-            card_names = args.cards,
-            force      = args.force,
-            guardrail  = args.guardrail,
-            deck_type  = args.deck_type,
+            deck_ids=args.decks,
+            card_names=args.cards,
+            force=args.force,
+            guardrail=args.guardrail,
+            deck_type=args.deck_type,
         )
 
     if args.composite:
         run_composite(
-            deck_ids   = args.decks,
-            card_names = args.cards,
-            arcana     = args.arcana,
-            suit       = args.suit,
-            deck_type  = args.deck_type,
-            force      = args.force,
+            deck_ids=args.decks,
+            card_names=args.cards,
+            arcana=args.arcana,
+            suit=args.suit,
+            deck_type=args.deck_type,
+            force=args.force,
         )

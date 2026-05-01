@@ -45,11 +45,14 @@ from pipeline.runner import run
 
 if __name__ == "__main__":
     # Runner handles its own argparse — just delegate
-    import sys
     import pathlib
+    import sys
+
     sys.path.insert(0, str(pathlib.Path(__file__).parent))
 
     # Re-invoke runner's CLI
-    from pipeline import runner
     import runpy
+
+    from pipeline import runner
+
     runpy.run_module("pipeline.runner", run_name="__main__", alter_sys=True)
