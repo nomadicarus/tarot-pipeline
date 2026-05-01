@@ -1,7 +1,7 @@
 """
 builder.py — builds final image generation prompts per card per deck.
 
-Prompt structure (adopted from gemini session, per owner instruction):
+Prompt structure (adopted from web-interface JSON, per owner instruction):
   1. Rendering engine prefix       — medium/style anchor
   2. Master prompt template        — deck-specific template with card injections
   3. Negative prompt suffix        — what to avoid (appended as instructional text)
@@ -14,7 +14,7 @@ Card-specific injections available in templates:
   {colours}          — comma-joined colour palette
   {technical_suffix} — quality/resolution suffix from deck config
 
-Temperature note (from gemini session notes):
+Temperature note (from web2api notes):
   Keep API temperature at 0.7-0.8 for creative geometric backgrounds.
   Set in the API call, not here.
 
@@ -33,25 +33,14 @@ sys.path.insert(0, str(ROOT))
 # ── roman numeral helper ───────────────────────────────────────────────────
 
 _ROMAN = [
-    (1000, "M"),
-    (900, "CM"),
-    (500, "D"),
-    (400, "CD"),
-    (100, "C"),
-    (90, "XC"),
-    (50, "L"),
-    (40, "XL"),
-    (10, "X"),
-    (9, "IX"),
-    (5, "V"),
-    (4, "IV"),
-    (1, "I"),
+    (1000, "M"), (900, "CM"), (500, "D"), (400, "CD"),
+    (100,  "C"), (90,  "XC"), (50,  "L"), (40,  "XL"),
+    (10,   "X"), (9,   "IX"), (5,   "V"), (4,   "IV"), (1, "I"),
 ]
-
 
 def to_roman(n: int) -> str:
     if n == 0:
-        return "0"  # The Fool
+        return "0"   # The Fool
     result = ""
     for value, numeral in _ROMAN:
         while n >= value:
@@ -61,22 +50,10 @@ def to_roman(n: int) -> str:
 
 
 _MINOR_ORDINALS = {
-    1: "Ace",
-    2: "Two",
-    3: "Three",
-    4: "Four",
-    5: "Five",
-    6: "Six",
-    7: "Seven",
-    8: "Eight",
-    9: "Nine",
-    10: "Ten",
-    11: "Princess",
-    12: "Prince",
-    13: "Queen",
-    14: "Knight",
+    1: "Ace", 2: "Two", 3: "Three", 4: "Four", 5: "Five",
+    6: "Six", 7: "Seven", 8: "Eight", 9: "Nine", 10: "Ten",
+    11: "Princess", 12: "Prince", 13: "Queen", 14: "Knight",
 }
-
 
 def card_number_str(card: dict) -> str:
     """Return a human-readable card number for prompt injection."""
@@ -86,7 +63,6 @@ def card_number_str(card: dict) -> str:
 
 
 # ── negative prompt formatter ─────────────────────────────────────────────
-
 
 def format_negative(negative_prompts: list) -> str:
     """
@@ -102,7 +78,6 @@ def format_negative(negative_prompts: list) -> str:
 
 # ── main prompt builder ───────────────────────────────────────────────────
 
-
 def build_prompt(card: dict, deck: dict) -> str:
     """
     Build a final image generation prompt for a given card and deck.
@@ -115,11 +90,11 @@ def build_prompt(card: dict, deck: dict) -> str:
         A fully rendered prompt string ready to send to the Gemini API.
     """
     # ── card field extraction ─────────────────────────────────────────────
-    card_name = card["name"]
-    card_number = card_number_str(card)
-    card_description = card.get("description", "")
-    symbols = ", ".join(card.get("symbols", []))
-    colours = ", ".join(card.get("colours", []))
+    card_name        = card["name"]
+    card_number      = card_number_str(card)
+    card_description = card.get("thoth_description", "")
+    symbols          = ", ".join(card.get("symbols", []))
+    colours          = ", ".join(card.get("colours", []))
     technical_suffix = deck.get("technical_suffix", "")
 
     # ── template rendering ────────────────────────────────────────────────
