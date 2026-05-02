@@ -1,25 +1,30 @@
 """
 main.py — top-level entry point for the tarot card pipeline.
 
-Usage:
-    # Generate all 78 cards across all 3 decks (234 images total)
-    python main.py
+Stages are now independent and CLI-selectable:
 
-    # Generate a specific deck only
-    python main.py --decks thoth
-    python main.py --decks lego_explosive claymation
+    python main.py --generate                          # generate raw art only
+    python main.py --composite                         # composite all /raw images
+    python main.py --generate --composite              # full pipeline (generate then composite)
 
-    # Generate specific cards (useful for testing)
-    python main.py --cards "The Fool" "The Magus" "The Priestess"
+    # Deck filtering
+    python main.py --generate --decks thoth claymation
+    python main.py --composite --decks thoth
 
-    # Force regeneration of already-completed cards
-    python main.py --force
+    # Card filtering
+    python main.py --generate --cards "The Fool" "The Magus"
+    python main.py --composite --suit wands
+    python main.py --composite --arcana major
+    python main.py --composite --deck thoth --cards "The Fool"
 
-    # Combine flags
-    python main.py --decks thoth --cards "The Fool" --force
+    # Force regeneration/recomposite
+    python main.py --generate --force
+    python main.py --composite --force
 
-    # Verbose logging
-    python main.py --log-level DEBUG
+    # Guardrail override
+    python main.py --generate --guardrail off
+
+Default behaviour (no flags): --generate only.
 
 Requirements:
     pip install google-genai Pillow Jinja2 python-dotenv tqdm cairosvg
@@ -36,9 +41,7 @@ Output structure:
     ├── thoth/
     │   ├── raw/
     │   └── ...
-    └── claymation/
-        ├── raw/
-        └── ...
+
 """
 
 import argparse
