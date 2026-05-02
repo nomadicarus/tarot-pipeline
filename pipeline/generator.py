@@ -1,176 +1,34 @@
-"""
-generator.py — Gemini API image generation stage only.
-
-Responsibilities:
-  - Build prompt from card + deck config
-  - Call Gemini API, save raw PNG to output/{deck}/raw/
-  - Write iTXt metadata into each raw PNG (card_name, suit, deck_id etc.)
-  - Track quota via QuotaTracker
-  - No compositing — that is handled separately by compositor.py
-
-CLI:
-    python pipeline/generator.py --deck thoth
-    python pipeline/generator.py --deck thoth --cards "The Fool" "The Magus"
-    python pipeline/generator.py --deck all
-    (normally invoked via main.py --generate)
-"""
+# pipeline/generator.py (refactored for filesystem orchestration)
 
 import logging
-import os
 import pathlib
-import time
-from typing import Optional
-
-from dotenv import load_dotenv
-
-load_dotenv()
+from typing import List
 
 logger = logging.getLogger(__name__)
 
-import sys
-
-ROOT = pathlib.Path(__file__).parent.parent
-sys.path.insert(0, str(ROOT))
-
-from config.settings import (
-    API_REGION,
-    API_REGION_FALLBACK,
-    MAX_RETRIES,
-    MODEL,
-    RATE_LIMIT_RETRY_DELAY,
-    RETRY_BASE_DELAY,
-)
-from pipeline.manifest import write_metadata
-from pipeline.quota import QuotaExceededError, QuotaTracker
-
-# ── client ────────────────────────────────────────────────────────────────
-
-_client = None
-_quota_tracker: Optional[QuotaTracker] = None
+from pipeline.generator import generate_card_image
+from prompts.builder import build_prompt
 
 
-def _build_client(region: str):
-    from google import genai
+def generate_batch(cards: List[dict], deck: dict, output_root: str = "output"):
+    """Batch wrapper for generation stage."""
 
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        raise EnvironmentError("GEMINI_API_KEY not found in environment or .env file.")
-    if region == "global":
-        return genai.Client(api_key=api_key)
-    return genai.Client(api_key=api_key, http_options={"api_version": "v1beta"})
+    deck_id = deck["id"]
 
-
-def get_client():
-    global _client
-    if _client is None:
+    for card in cards:
         try:
-            _client = _build_client(API_REGION)
-        except Exception as e:
-            logger.warning(
-                f"Regional client ({API_REGION}) failed: {e}. Trying {API_REGION_FALLBACK}."
-            )
-            _client = _build_client(API_REGION_FALLBACK)
-    return _client
+            prompt = build_prompt(card, deck)
 
-
-def get_quota_tracker() -> QuotaTracker:
-    global _quota_tracker
-    if _quota_tracker is None:
-        _quota_tracker = QuotaTracker()
-    return _quota_tracker
-
-
-# ── core generation ───────────────────────────────────────────────────────
-
-
-def generate_card_image(
-    prompt: str,
-    output_path: pathlib.Path,
-    card: dict,
-    deck: dict,
-    deck_type: str = "tarot",
-    retries: int = MAX_RETRIES,
-) -> bool:
-    """
-    Generate a single card image and save raw PNG with iTXt metadata.
-
-    Args:
-        prompt:      Fully built prompt string.
-        output_path: Path to save the raw PNG.
-        card:        Card dict from cards.json (used for metadata).
-        deck:        Deck dict from decks.json (used for metadata).
-        deck_type:   Card deck type for metadata (default "tarot").
-        retries:     Number of retry attempts.
-
-    Returns:
-        True on success, False on failure.
-    """
-    from google.genai import types
-
-    output_path = pathlib.Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    client = get_client()
-    tracker = get_quota_tracker()
-
-    # Pre-flight quota gate
-    tracker.check_and_gate()
-
-    for attempt in range(1, retries + 1):
-        try:
-            logger.debug(f"[{MODEL}] Attempt {attempt}/{retries} -> {output_path.name}")
-
-            response = client.models.generate_content(
-                model=MODEL,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    response_modalities=["IMAGE", "TEXT"],
-                ),
+            output_path = (
+                pathlib.Path(output_root) / deck_id / "raw" / f"{card['name']}.png"
             )
 
-            for part in response.candidates[0].content.parts:
-                if part.inline_data is not None:
-                    output_path.write_bytes(part.inline_data.data)
-
-                    # Write iTXt metadata into the raw PNG
-                    try:
-                        write_metadata(
-                            output_path, card, deck, prompt, deck_type=deck_type
-                        )
-                    except Exception:
-                        logger.warning("Metadata write failed — continuing")
-
-                    tracker.record_success()
-                    logger.info(
-                        f"Saved: {output_path.name}  "
-                        f"[quota: {tracker.effective_count}/{tracker.daily_limit}]"
-                    )
-                    return True
-
-            logger.warning(f"Attempt {attempt}: no image in response.")
-
-        except QuotaExceededError:
-            raise
+            generate_card_image(
+                prompt=prompt,
+                output_path=output_path,
+                card=card,
+                deck=deck,
+            )
 
         except Exception as e:
-            err_str = str(e).lower()
-            is_rate_limit = any(
-                x in err_str
-                for x in ("429", "quota", "rate limit", "resource exhausted")
-            )
-            if is_rate_limit:
-                delay = RATE_LIMIT_RETRY_DELAY * attempt
-                logger.warning(
-                    f"Rate limited (429) attempt {attempt}. Waiting {delay:.0f}s..."
-                )
-            else:
-                delay = RETRY_BASE_DELAY * (2 ** (attempt - 1))
-                logger.warning(f"Attempt {attempt} failed: {e}")
-
-            if attempt < retries:
-                logger.info(f"Retrying in {delay:.0f}s...")
-                time.sleep(delay)
-
-    tracker.record_failure()
-    logger.error(f"All {retries} attempts failed: {output_path.name}")
-    return False
+            logger.error(f"Generation failed for {card.get('name')}: {e}")
