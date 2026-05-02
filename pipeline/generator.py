@@ -15,27 +15,33 @@ CLI:
     (normally invoked via main.py --generate)
 """
 
-import os
-import time
-import pathlib
 import logging
+import os
+import pathlib
+import time
 from typing import Optional
 
 from dotenv import load_dotenv
+
 load_dotenv()
 
 logger = logging.getLogger(__name__)
 
 import sys
+
 ROOT = pathlib.Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
 from config.settings import (
-    MODEL, API_REGION, API_REGION_FALLBACK,
-    MAX_RETRIES, RETRY_BASE_DELAY, RATE_LIMIT_RETRY_DELAY,
+    API_REGION,
+    API_REGION_FALLBACK,
+    MAX_RETRIES,
+    MODEL,
+    RATE_LIMIT_RETRY_DELAY,
+    RETRY_BASE_DELAY,
 )
-from pipeline.quota import QuotaTracker, QuotaExceededError
 from pipeline.manifest import write_metadata
+from pipeline.quota import QuotaExceededError, QuotaTracker
 
 # ── client ────────────────────────────────────────────────────────────────
 
@@ -45,6 +51,7 @@ _quota_tracker: Optional[QuotaTracker] = None
 
 def _build_client(region: str):
     from google import genai
+
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         raise EnvironmentError("GEMINI_API_KEY not found in environment or .env file.")
@@ -59,7 +66,9 @@ def get_client():
         try:
             _client = _build_client(API_REGION)
         except Exception as e:
-            logger.warning(f"Regional client ({API_REGION}) failed: {e}. Trying {API_REGION_FALLBACK}.")
+            logger.warning(
+                f"Regional client ({API_REGION}) failed: {e}. Trying {API_REGION_FALLBACK}."
+            )
             _client = _build_client(API_REGION_FALLBACK)
     return _client
 
@@ -73,13 +82,14 @@ def get_quota_tracker() -> QuotaTracker:
 
 # ── core generation ───────────────────────────────────────────────────────
 
+
 def generate_card_image(
-    prompt:      str,
+    prompt: str,
     output_path: pathlib.Path,
-    card:        dict,
-    deck:        dict,
-    deck_type:   str = "tarot",
-    retries:     int = MAX_RETRIES,
+    card: dict,
+    deck: dict,
+    deck_type: str = "tarot",
+    retries: int = MAX_RETRIES,
 ) -> bool:
     """
     Generate a single card image and save raw PNG with iTXt metadata.
@@ -100,7 +110,7 @@ def generate_card_image(
     output_path = pathlib.Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    client  = get_client()
+    client = get_client()
     tracker = get_quota_tracker()
 
     # Pre-flight quota gate
@@ -123,7 +133,12 @@ def generate_card_image(
                     output_path.write_bytes(part.inline_data.data)
 
                     # Write iTXt metadata into the raw PNG
-                    write_metadata(output_path, card, deck, prompt, deck_type=deck_type)
+                    try:
+                        write_metadata(
+                            output_path, card, deck, prompt, deck_type=deck_type
+                        )
+                    except Exception:
+                        logger.warning("Metadata write failed — continuing")
 
                     tracker.record_success()
                     logger.info(
@@ -140,11 +155,14 @@ def generate_card_image(
         except Exception as e:
             err_str = str(e).lower()
             is_rate_limit = any(
-                x in err_str for x in ("429", "quota", "rate limit", "resource exhausted")
+                x in err_str
+                for x in ("429", "quota", "rate limit", "resource exhausted")
             )
             if is_rate_limit:
                 delay = RATE_LIMIT_RETRY_DELAY * attempt
-                logger.warning(f"Rate limited (429) attempt {attempt}. Waiting {delay:.0f}s...")
+                logger.warning(
+                    f"Rate limited (429) attempt {attempt}. Waiting {delay:.0f}s..."
+                )
             else:
                 delay = RETRY_BASE_DELAY * (2 ** (attempt - 1))
                 logger.warning(f"Attempt {attempt} failed: {e}")
