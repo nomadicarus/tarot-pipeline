@@ -1,62 +1,92 @@
 """
-╔══════════════════════════════════════════════════════════════════╗
-║              TAROT PIPELINE — USER SETTINGS                      ║
-║                                                                  ║
-║  Edit this file to control model choice and daily spend limits.  ║
-╚══════════════════════════════════════════════════════════════════╝
+╔══════════════════════════════════════════════════════════════════════╗
+║              TAROT PIPELINE — USER SETTINGS                          ║
+║  Edit this file to control model, quota limits, guardrail & costs.  ║
+╚══════════════════════════════════════════════════════════════════════╝
 
-DAILY_LIMIT:  Max API image requests per day (PT timezone, resets midnight PT).
-              Free tier = 500 requests/day. Set lower to stay within budget.
-              Pipeline will HALT and ask permission before exceeding this.
+GUARDRAIL_MODE controls how quota limits are enforced:
 
-MODEL:        Gemini image generation model to use.
-              Options:
-                "gemini-2.5-flash-preview-05-20"  ← recommended (500/day free)
-                "gemini-3.1-flash-image-preview"  ← Nano Banana 2
-                "gemini-3-pro-image-preview"       ← highest quality, lower quota
+  "preflight"  — (DEFAULT, RECOMMENDED)
+                 Calculates total jobs BEFORE starting any API calls.
+                 • Run fits within quota  → executes completely uninterrupted.
+                 • Run would exceed quota → tells you the overrun count,
+                   asks ONCE, then runs to the limit and halts cleanly.
+                 ✓ Safe to leave running remotely once preflight clears.
 
-REQUIRE_CONFIRMATION_TO_EXCEED:
-              If True (recommended), pipeline stops and asks before crossing
-              DAILY_LIMIT. If False, pipeline runs uninterrupted (use with care
-              if billing is attached — costs real money beyond free tier).
+  "realtime"   — No preflight calculation. Runs freely until quota is hit.
+                 At the limit: pauses mid-run, shows overrun estimate, asks to continue.
+                 ✗ NOT safe to leave running remotely — will pause and wait for input.
 
-API_REGION:   Endpoint region. "us-central1" avoids region-locking issues.
-              Fallback: "global" if regional endpoint unavailable.
+  "off"        — No checks, no prompts. Runs to completion regardless of quota.
+                 ✗ Will exceed free tier on large runs. Only use with billing attached.
+
+CLI override:  python main.py --guardrail preflight|realtime|off
+               (overrides this file for that run only)
 """
 
 # ─────────────────────────────────────────────────────────────────
-#  ★  PRIMARY USER SETTINGS — CHANGE THESE  ★
+#  ★  MODEL SELECTION — uncomment the model you want to use  ★
+# ─────────────────────────────────────────────────────────────────
+#
+#  Model                               RPD   RPM    TPM       $/img(1K)  $/img(2K est.)
+#  gemini-3.1-flash-image-preview      500   100    200,000   $0.067     $0.08–0.12
+#  gemini-2.0-flash-preview-image-gen  500   10     1,000,000 $0.039     $0.04–0.08
+#  gemini-2.5-flash-preview-05-20      500   500*   500,000   $0.039     $0.04–0.08
+#
+#  * RPM limits may vary — verify at aistudio.google.com/quota
+#  Batch/optimised routes: ~$0.019–$0.02 per image (2.5 Flash)
 # ─────────────────────────────────────────────────────────────────
 
-MODEL = "gemini-2.0-flash-preview-image-generation"
-# MODEL = "gemini-3.1-flash-image-preview"
-# MODEL = "gemini-3-pro-image-preview"
+MODEL: str = "gemini-3.1-flash-image-preview"
+# MODEL: str = "gemini-2.0-flash-preview-image-generation"
+# MODEL: str = "gemini-2.5-flash-preview-05-20"
 
-DAILY_LIMIT: int = 500  # requests per day (free tier ceiling)
-DAILY_SOFT_WARN: int = 450  # warn at this count (90% of free tier)
+# ─────────────────────────────────────────────────────────────────
+#  ★  QUOTA & GUARDRAIL  ★
+# ─────────────────────────────────────────────────────────────────
 
-REQUIRE_CONFIRMATION_TO_EXCEED: bool = True  # STRONGLY RECOMMENDED: True
+DAILY_LIMIT: int     = 500    # max requests per day (free tier ceiling)
+DAILY_SOFT_WARN: int = 450    # warn at this count (90% of free tier)
 
-API_REGION: str = "us-central1"  # regional endpoint
+GUARDRAIL_MODE: str  = "preflight"   # "preflight" | "realtime" | "off"
+
+# ─────────────────────────────────────────────────────────────────
+#  ★  COST TRACKING  ★
+#  Set per-image cost for your active model (conservative 2K estimate).
+#  Set to 0.0 to disable cost tracking.
+# ─────────────────────────────────────────────────────────────────
+
+COST_PER_IMAGE_USD: float = 0.10   # gemini-3.1-flash-image-preview @ ~2K
+# COST_PER_IMAGE_USD: float = 0.06  # gemini-2.5-flash estimate
+# COST_PER_IMAGE_USD: float = 0.0   # disable cost tracking
+
+COST_WARN_USD: float = 5.00        # warn when estimated run cost exceeds this
+
+# ─────────────────────────────────────────────────────────────────
+#  ★  RATE LIMITING  ★
+#  RPM_LIMIT: requests per minute for the active model (see table above).
+#  API_CALL_DELAY: auto-derived from RPM. Override manually if needed.
+# ─────────────────────────────────────────────────────────────────
+
+RPM_LIMIT: int        = 100          # gemini-3.1-flash: 100 RPM
+TPM_LIMIT: int        = 200_000      # gemini-3.1-flash: 200k TPM
+
+# Minimum safe delay derived from RPM. Increase if you hit 429s.
+API_CALL_DELAY: float = max(60.0 / RPM_LIMIT, 1.0)
+
+# ─────────────────────────────────────────────────────────────────
+#  ★  ENDPOINT  ★
+# ─────────────────────────────────────────────────────────────────
+
+API_REGION: str          = "us-central1"   # avoids region-locking
 API_REGION_FALLBACK: str = "global"
 
-# ─────────────────────────────────────────────────────────────────
-#  Timing
-# ─────────────────────────────────────────────────────────────────
-
-QUOTA_TIMEZONE = "US/Pacific"  # PT — resets at midnight Pacific Time
-# UTC-8 standard / UTC-7 daylight saving
+QUOTA_TIMEZONE: str      = "America/Los_Angeles"   # PT, handles DST
 
 # ─────────────────────────────────────────────────────────────────
-#  Rate limiting (inter-request delay)
+#  ★  RETRY  ★
 # ─────────────────────────────────────────────────────────────────
 
-# Delay between API calls in seconds.
-# Free tier (~3 RPM image): 20s is safe.
-# Paid tier (~10 RPM image): 8s is safe.
-API_CALL_DELAY: float = 20.0
-
-# Retry settings
-MAX_RETRIES: int = 2
-RETRY_BASE_DELAY: float = 15.0  # exponential backoff base (seconds)
-RATE_LIMIT_RETRY_DELAY: float = 60.0  # extra wait on 429 (× attempt number)
+MAX_RETRIES: int              = 2
+RETRY_BASE_DELAY: float       = 15.0
+RATE_LIMIT_RETRY_DELAY: float = 60.0   # seconds × attempt number on 429

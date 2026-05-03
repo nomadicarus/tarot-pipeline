@@ -1,134 +1,114 @@
 """
-quota.py — daily API request quota tracker.
+quota.py — daily API request quota tracker with three-mode guardrail.
 
-Responsibilities:
-  - Tracks successful and failed API requests locally (quota_state.json)
-  - Resets count at midnight Pacific Time (PT, UTC-8 / UTC-7 DST)
-  - Attempts to sync with the Gemini API server for real usage data
-  - If server sync is unavailable, falls back to local counts only
-  - Enforces DAILY_LIMIT with a hard stop + user confirmation gate
-  - Emits a soft warning at DAILY_SOFT_WARN requests
+GUARDRAIL MODES (set in config/settings.py or via CLI --guardrail):
 
-State file: config/quota_state.json (auto-created, safe to delete to reset)
+  "preflight"  Pre-run check calculates total jobs vs remaining quota.
+               Fits: run proceeds uninterrupted.
+               Exceeds: informs user of exact overrun count, asks ONCE upfront,
+               then runs to the limit and halts cleanly.
+               Safe to leave running remotely once preflight clears.
 
-Usage:
-    from pipeline.quota import QuotaTracker
-    tracker = QuotaTracker()
+  "realtime"   No preflight. Runs until quota hit mid-run, then pauses and asks.
+               NOT safe for remote unattended runs.
 
-    # Before each API call:
-    tracker.check_and_gate()          # raises QuotaExceededError or prompts user
+  "off"        No checks or prompts. Runs to completion regardless.
 
-    # After a successful call:
-    tracker.record_success()
-
-    # After a failed call:
-    tracker.record_failure()
-
-    # Print status at any time:
-    tracker.print_status()
+State file: config/quota_state.json  (auto-created; delete to reset)
+Timezone:   America/Los_Angeles (PT — handles DST automatically)
 """
 
 import json
 import logging
 import pathlib
 import sys
-from datetime import datetime, timedelta, timezone
+import urllib.request
+import urllib.error
+from datetime import datetime, timedelta
 from typing import Optional
 from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
 
-# ── paths ──────────────────────────────────────────────────────────────────
-ROOT = pathlib.Path(__file__).parent.parent
+ROOT       = pathlib.Path(__file__).parent.parent
 STATE_FILE = ROOT / "config" / "quota_state.json"
+PT         = ZoneInfo("America/Los_Angeles")
 
-# ── PT timezone ────────────────────────────────────────────────────────────
-PT = ZoneInfo("America/Los_Angeles")  # handles DST automatically
+VALID_MODES = ("preflight", "realtime", "off")
 
+
+# ── helpers ────────────────────────────────────────────────────────────────
 
 def _now_pt() -> datetime:
     return datetime.now(tz=PT)
 
-
-def _today_pt_str() -> str:
+def _today_pt() -> str:
     return _now_pt().strftime("%Y-%m-%d")
 
-
-def _midnight_pt_reset_str() -> str:
-    """ISO timestamp of the next midnight PT reset."""
+def _next_midnight_pt() -> str:
     now = _now_pt()
     midnight = (now + timedelta(days=1)).replace(
         hour=0, minute=0, second=0, microsecond=0
     )
     return midnight.isoformat()
 
+def _empty_state(date: str) -> dict:
+    return {
+        "date_pt":             date,
+        "successful_requests": 0,
+        "failed_requests":     0,
+        "estimated_cost_usd":  0.0,
+        "server_synced":       False,
+        "server_count":        None,
+        "last_sync_attempt":   None,
+        "next_reset":          _next_midnight_pt(),
+    }
+
 
 # ── exceptions ─────────────────────────────────────────────────────────────
 
-
 class QuotaExceededError(Exception):
-    """Raised when the daily quota is exceeded and user declines to continue."""
-
+    """Raised when quota is exceeded and pipeline should halt."""
     pass
-
 
 class QuotaUserDeclined(QuotaExceededError):
-    """User declined to continue past quota limit."""
-
+    """User explicitly declined to continue past quota limit."""
     pass
-
-
-# ── state schema ───────────────────────────────────────────────────────────
-
-
-def _empty_state(date_str: str) -> dict:
-    return {
-        "date_pt": date_str,
-        "successful_requests": 0,
-        "failed_requests": 0,
-        "server_synced": False,
-        "server_count": None,
-        "last_sync_attempt": None,
-        "next_reset": _midnight_pt_reset_str(),
-    }
 
 
 # ── QuotaTracker ───────────────────────────────────────────────────────────
 
-
 class QuotaTracker:
-    """
-    Tracks daily Gemini image API usage with server sync and guardrails.
-    """
 
-    def __init__(self):
-        # Import here to avoid circular imports
-        import pathlib
-        import sys
-
+    def __init__(self, guardrail_mode: Optional[str] = None):
         sys.path.insert(0, str(ROOT))
         from config.settings import (
-            API_REGION,
-            API_REGION_FALLBACK,
-            DAILY_LIMIT,
-            DAILY_SOFT_WARN,
-            MODEL,
-            REQUIRE_CONFIRMATION_TO_EXCEED,
+            MODEL, DAILY_LIMIT, DAILY_SOFT_WARN,
+            API_REGION, API_REGION_FALLBACK,
+            GUARDRAIL_MODE, COST_PER_IMAGE_USD, COST_WARN_USD,
         )
-
-        self.daily_limit = DAILY_LIMIT
-        self.soft_warn = DAILY_SOFT_WARN
-        self.require_confirmation = REQUIRE_CONFIRMATION_TO_EXCEED
-        self.model = MODEL
-        self.region = API_REGION
+        self.model           = MODEL
+        self.daily_limit     = DAILY_LIMIT
+        self.soft_warn       = DAILY_SOFT_WARN
+        self.region          = API_REGION
         self.region_fallback = API_REGION_FALLBACK
+        self.cost_per_image  = COST_PER_IMAGE_USD
+        self.cost_warn       = COST_WARN_USD
+
+        mode = (guardrail_mode or GUARDRAIL_MODE).lower()
+        if mode not in VALID_MODES:
+            raise ValueError(
+                f"Invalid guardrail mode '{mode}'. Choose from: {VALID_MODES}"
+            )
+        self.guardrail_mode = mode
 
         self._state = self._load()
+        self._user_approved_overrun = False
 
     # ── persistence ────────────────────────────────────────────────────────
 
     def _load(self) -> dict:
-        today = _today_pt_str()
+        today = _today_pt()
         if STATE_FILE.exists():
             try:
                 state = json.loads(STATE_FILE.read_text())
@@ -137,10 +117,11 @@ class QuotaTracker:
                     return state
                 else:
                     logger.info(
-                        f"New PT day ({today}). "
-                        f"Previous day ({state.get('date_pt')}) had "
-                        f"{state.get('successful_requests', 0)} successful requests. "
-                        f"Resetting quota counter."
+                        f"New PT day ({today}). Previous day "
+                        f"({state.get('date_pt')}) used "
+                        f"{state.get('successful_requests', 0)} requests "
+                        f"(est. ${state.get('estimated_cost_usd', 0.0):.2f}). "
+                        f"Resetting."
                     )
             except Exception as e:
                 logger.warning(f"Could not read quota state: {e}. Starting fresh.")
@@ -167,236 +148,266 @@ class QuotaTracker:
         return self.successful + self.failed
 
     @property
+    def estimated_cost(self) -> float:
+        return self._state.get("estimated_cost_usd", 0.0)
+
+    @property
     def effective_count(self) -> int:
-        """
-        The count to use for quota enforcement.
-        Prefers server-synced data if available; falls back to local successful count.
-        """
+        """Server-synced count if available, else local successful count."""
         if self._state["server_synced"] and self._state["server_count"] is not None:
             return self._state["server_count"]
         return self.successful
+
+    @property
+    def remaining(self) -> int:
+        return max(0, self.daily_limit - self.effective_count)
 
     # ── server sync ────────────────────────────────────────────────────────
 
     def sync_with_server(self) -> bool:
         """
-        Attempt to fetch real usage count from the Gemini API.
-        Updates state if successful. Returns True on success, False on failure.
-
-        Note: The Gemini API exposes usage via the Cloud Monitoring / AI Platform
-        Usage APIs. We query the generateContent usage metrics endpoint.
-        Falls back gracefully if unavailable (no billing, no permissions, etc.).
+        Attempt to confirm API connectivity.
+        Granular per-day image counts require OAuth + Cloud Monitoring
+        (not available via API key alone). Falls back to local counts.
         """
         import os
-
         from dotenv import load_dotenv
-
         load_dotenv()
 
         api_key = os.environ.get("GEMINI_API_KEY")
         if not api_key:
             logger.debug("No API key — skipping server sync.")
-            self._state["server_synced"] = False
-            self._state["last_sync_attempt"] = _now_pt().isoformat()
-            self._save()
+            self._finalize_sync(False, "no API key")
             return False
 
         try:
-            import json as _json
-            import urllib.error
-            import urllib.request
-
-            # Query the Gemini models list as a lightweight connectivity check,
-            # then attempt to read usage from the quota/usage API.
-            # The v1beta usage endpoint returns per-model request counts for today.
-            today = _today_pt_str()
             url = (
-                f"https://{self.region}-aiplatform.googleapis.com/v1/"
-                f"projects/-/locations/{self.region}/publishers/google/"
-                f"models/{self.model}:getIamPolicy"
-            )
-            # Simpler approach: use the generativelanguage REST API usage endpoint
-            usage_url = (
                 f"https://generativelanguage.googleapis.com/v1beta/models"
                 f"?key={api_key}&pageSize=1"
             )
             req = urllib.request.Request(
-                usage_url, headers={"User-Agent": "tarot-pipeline/1.0"}
+                url, headers={"User-Agent": "tarot-pipeline/1.0"}
             )
             with urllib.request.urlopen(req, timeout=8) as resp:
-                # If we can reach the API, it's live — but granular per-day image
-                # generation counts aren't exposed in the public REST API without
-                # OAuth + Cloud Monitoring. We confirm connectivity only.
-                data = _json.loads(resp.read())
+                data = json.loads(resp.read())
                 if "models" in data:
                     logger.debug(
-                        "Server reachable — granular usage not available via API key alone."
+                        "API reachable. Granular usage requires OAuth + "
+                        "Cloud Monitoring. Using local count."
                     )
-                    # Mark as connectivity-confirmed but not full-sync
-                    self._state["server_synced"] = False
-                    self._state["last_sync_attempt"] = _now_pt().isoformat()
-                    self._save()
+                    self._finalize_sync(False, "API reachable, granular usage unavailable")
                     return False
-
         except urllib.error.HTTPError as e:
             if e.code == 429:
                 logger.warning("Server sync hit 429 — quota already under pressure.")
+                self._finalize_sync(False, "429 during sync")
             else:
-                logger.debug(f"Server sync HTTP error {e.code}: {e.reason}")
+                self._finalize_sync(False, f"HTTP {e.code}")
         except Exception as e:
-            logger.debug(f"Server sync unavailable: {e}")
+            self._finalize_sync(False, str(e)[:80])
 
-        self._state["server_synced"] = False
-        self._state["last_sync_attempt"] = _now_pt().isoformat()
-        self._save()
         return False
+
+    def _finalize_sync(self, success: bool, note: str = ""):
+        self._state["server_synced"]     = success
+        self._state["last_sync_attempt"] = _now_pt().isoformat()
+        if note:
+            self._state["sync_note"] = note
+        self._save()
 
     # ── recording ──────────────────────────────────────────────────────────
 
     def record_success(self):
         """Call after every successful API image generation."""
         self._state["successful_requests"] += 1
+        self._state["estimated_cost_usd"] = round(
+            self.successful * self.cost_per_image, 4
+        )
         self._save()
+
+        if self.cost_warn > 0 and self.estimated_cost >= self.cost_warn:
+            logger.warning(
+                f"Cost warning: est. spend today ${self.estimated_cost:.2f} "
+                f"(threshold: ${self.cost_warn:.2f})"
+            )
         logger.debug(
-            f"Quota: {self.successful} successful / {self.failed} failed today (PT)"
+            f"Quota: {self.successful} ok / {self.failed} failed  "
+            f"est. ${self.estimated_cost:.2f}  ({self.remaining} remaining)"
         )
 
     def record_failure(self):
-        """Call after every failed API call (including retries exhausted)."""
+        """Call after every failed API call (retries exhausted)."""
         self._state["failed_requests"] += 1
         self._save()
         logger.debug(
-            f"Quota: {self.successful} successful / {self.failed} failed today (PT)"
+            f"Quota: {self.successful} ok / {self.failed} failed today (PT)"
         )
 
-    # ── guardrail ──────────────────────────────────────────────────────────
+    # ── preflight check ────────────────────────────────────────────────────
 
-    def check_and_gate(self, interactive: bool = True) -> None:
+    def preflight(self, total_jobs: int) -> None:
         """
-        Pre-flight check before making an API call.
-
-        - Soft warn at DAILY_SOFT_WARN
-        - Hard stop at DAILY_LIMIT
-
-        If REQUIRE_CONFIRMATION_TO_EXCEED is True and limit is reached:
-          - In interactive mode: prompt user for permission to continue
-          - In non-interactive mode: raise QuotaExceededError
-
-        Args:
-            interactive: If False, never prompt — raise instead.
+        Pre-run quota check (preflight mode only).
+        Called once before the pipeline loop with the total planned API calls.
 
         Raises:
-            QuotaExceededError: If limit exceeded and user declines (or non-interactive).
+            QuotaUserDeclined: if user declines to proceed.
         """
-        count = self.effective_count
-        source = "server-synced" if self._state["server_synced"] else "local count"
-
-        # ── soft warning ──
-        if count == self.soft_warn:
-            self._print_banner(
-                f"⚠  QUOTA WARNING — {count}/{self.daily_limit} requests used today (PT) [{source}]\n"
-                f"   Approaching daily free-tier limit. {self.daily_limit - count} remaining.",
-                colour="yellow",
-            )
-
-        # ── hard limit ──
-        if count >= self.daily_limit:
-            msg = (
-                f"\n{'═' * 62}\n"
-                f"  🚨  DAILY QUOTA LIMIT REACHED\n"
-                f"{'═' * 62}\n"
-                f"  Model          : {self.model}\n"
-                f"  Requests today : {count} (limit: {self.daily_limit})\n"
-                f"  Count source   : {source}\n"
-                f"  Successful     : {self.successful}\n"
-                f"  Failed         : {self.failed}\n"
-                f"  Resets at      : midnight PT ({self._state['next_reset']})\n"
-                f"{'═' * 62}\n"
-                f"  ⚠  Continuing will exceed your free-tier limit.\n"
-                f"     If billing is attached, THIS WILL INCUR CHARGES.\n"
-                f"{'═' * 62}\n"
-            )
-
-            if not self.require_confirmation:
-                logger.warning(
-                    f"Quota exceeded ({count}/{self.daily_limit}) but REQUIRE_CONFIRMATION_TO_EXCEED=False. Continuing."
-                )
-                print(msg)
-                return
-
-            if not interactive:
-                raise QuotaExceededError(
-                    f"Daily quota of {self.daily_limit} requests exceeded "
-                    f"({count} used). Resets at midnight PT."
-                )
-
-            print(msg)
-            try:
-                answer = (
-                    input(
-                        "  Do you want to continue and exceed the daily limit? [yes/no]: "
-                    )
-                    .strip()
-                    .lower()
-                )
-            except (EOFError, KeyboardInterrupt):
-                print("\nAborted.")
-                raise QuotaExceededError("User aborted at quota gate.")
-
-            if answer not in ("yes", "y"):
-                raise QuotaExceededError(
-                    f"User declined to exceed daily quota of {self.daily_limit}. "
-                    f"Pipeline halted. Rerun after midnight PT to resume."
-                )
-
-            # User said yes — log prominently and continue
-            logger.warning(
-                f"User authorised exceeding daily limit "
-                f"({count}/{self.daily_limit}). Continuing."
-            )
-            # Raise the limit for this session to avoid re-prompting every card
-            self.daily_limit = count + 500
+        if self.guardrail_mode in ("off", "realtime"):
             return
 
-        # ── all clear ──
-        remaining = self.daily_limit - count
-        if remaining <= 20:
-            logger.info(
-                f"Quota: {count}/{self.daily_limit} used ({remaining} remaining) [{source}]"
+        used      = self.effective_count
+        remaining = self.remaining
+        source    = "server-synced" if self._state["server_synced"] else "local count"
+        est_cost  = total_jobs * self.cost_per_image
+
+        if total_jobs <= remaining:
+            print(
+                f"\n  ✓ Preflight OK — {total_jobs} jobs  "
+                f"({remaining} quota remaining, est. ${est_cost:.2f})  [{source}]\n"
+            )
+            return
+
+        overrun = total_jobs - remaining
+        print(
+            f"\n{'═' * 64}\n"
+            f"  ⚠  PREFLIGHT: RUN WOULD EXCEED DAILY LIMIT\n"
+            f"{'═' * 64}\n"
+            f"  Model              : {self.model}\n"
+            f"  Jobs this run      : {total_jobs}  (est. ${est_cost:.2f})\n"
+            f"  Quota used today   : {used}/{self.daily_limit}  [{source}]\n"
+            f"  Remaining today    : {remaining}\n"
+            f"  Will complete      : {remaining} cards today\n"
+            f"  Overrun            : {overrun} calls beyond free-tier limit\n"
+            f"  Resets at          : {self._state['next_reset']}\n"
+            f"{'═' * 64}\n"
+        )
+
+        try:
+            answer = input(
+                f"  Proceed? Will run {remaining} cards then halt. [yes/no]: "
+            ).strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            raise QuotaUserDeclined("Preflight aborted by user.")
+
+        if answer not in ("yes", "y"):
+            raise QuotaUserDeclined(
+                f"User declined at preflight. "
+                f"Rerun after midnight PT for remaining {overrun} cards."
             )
 
-    # ── reporting ──────────────────────────────────────────────────────────
+        self._user_approved_overrun = True
+        print(f"\n  Proceeding. Will halt after {remaining} cards.\n")
+
+    # ── per-call gate ──────────────────────────────────────────────────────
+
+    def check_and_gate(self) -> None:
+        """
+        Per-call quota check. Behaviour depends on guardrail_mode.
+
+        "off"       — always passes.
+        "preflight" — halts cleanly at limit (user was informed at preflight).
+        "realtime"  — prompts user when limit is hit, once per session.
+
+        Raises:
+            QuotaExceededError:  limit hit in preflight mode.
+            QuotaUserDeclined:   user declined in realtime mode.
+        """
+        if self.guardrail_mode == "off":
+            return
+
+        count  = self.effective_count
+        source = "server-synced" if self._state["server_synced"] else "local count"
+
+        # Soft warning
+        if count == self.soft_warn:
+            print(
+                f"\n  \033[93m⚠  Quota soft warning: "
+                f"{count}/{self.daily_limit} used today [{source}]\033[0m"
+            )
+
+        if count < self.daily_limit:
+            return
+
+        # Limit reached
+        if self.guardrail_mode == "preflight":
+            raise QuotaExceededError(
+                f"Daily limit of {self.daily_limit} reached ({count} used). "
+                f"Halting cleanly. Rerun after midnight PT."
+            )
+
+        # realtime mode
+        if self._user_approved_overrun:
+            return
+
+        print(
+            f"\n{'═' * 64}\n"
+            f"  🚨  DAILY QUOTA LIMIT REACHED\n"
+            f"{'═' * 64}\n"
+            f"  Model            : {self.model}\n"
+            f"  Requests today   : {count}/{self.daily_limit}  [{source}]\n"
+            f"  Estimated cost   : ${self.estimated_cost:.2f}\n"
+            f"  Successful       : {self.successful}\n"
+            f"  Failed           : {self.failed}\n"
+            f"  Resets at        : {self._state['next_reset']}\n"
+            f"{'═' * 64}\n"
+            f"  ⚠  Continuing will exceed free-tier limit.\n"
+            f"     If billing is attached, THIS WILL INCUR CHARGES.\n"
+            f"{'═' * 64}\n"
+        )
+
+        try:
+            answer = input(
+                "  Continue past limit? [yes/no]: "
+            ).strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            raise QuotaUserDeclined("Aborted at realtime quota gate.")
+
+        if answer not in ("yes", "y"):
+            raise QuotaUserDeclined(
+                f"User declined. Rerun after midnight PT."
+            )
+
+        self._user_approved_overrun = True
+        logger.warning(
+            f"User authorised exceeding daily limit ({count}/{self.daily_limit})."
+        )
+
+    # ── status display ─────────────────────────────────────────────────────
 
     def print_status(self):
-        count = self.effective_count
+        count  = self.effective_count
         source = (
             "server-synced"
             if self._state["server_synced"]
             else "local (no server sync)"
         )
+        note   = self._state.get("sync_note", "")
         now_pt = _now_pt()
+        mode_note = {
+            "preflight": "pre-run check, uninterrupted once cleared",
+            "realtime":  "prompts at limit mid-run (not remote-safe)",
+            "off":       "no checks — use with billing attached only",
+        }.get(self.guardrail_mode, "")
+
         print(
-            f"\n{'─' * 52}\n"
+            f"\n{'─' * 56}\n"
             f"  QUOTA STATUS — {now_pt.strftime('%Y-%m-%d %H:%M %Z')}\n"
-            f"{'─' * 52}\n"
+            f"{'─' * 56}\n"
             f"  Model            : {self.model}\n"
+            f"  Guardrail mode   : {self.guardrail_mode}  ({mode_note})\n"
             f"  Daily limit      : {self.daily_limit}\n"
             f"  Soft warn at     : {self.soft_warn}\n"
             f"  Effective count  : {count}  [{source}]\n"
-            f"  Successful today : {self.successful}\n"
+            + (f"  Sync note        : {note}\n" if note else "")
+            + f"  Successful today : {self.successful}\n"
             f"  Failed today     : {self.failed}\n"
-            f"  Remaining        : {max(0, self.daily_limit - count)}\n"
-            f"  Resets at        : midnight PT\n"
-            f"  Next reset       : {self._state['next_reset']}\n"
-            f"{'─' * 52}\n"
+            f"  Est. cost today  : ${self.estimated_cost:.2f}  "
+            f"(@ ${self.cost_per_image}/img)\n"
+            f"  Remaining        : {self.remaining}\n"
+            f"  Resets at        : midnight PT ({self._state['next_reset']})\n"
+            f"{'─' * 56}\n"
         )
-
-    @staticmethod
-    def _print_banner(msg: str, colour: str = "yellow"):
-        colours = {"yellow": "\033[93m", "red": "\033[91m", "reset": "\033[0m"}
-        c = colours.get(colour, "")
-        r = colours["reset"]
-        print(f"{c}{msg}{r}")
 
 
 # ── CLI convenience ────────────────────────────────────────────────────────
