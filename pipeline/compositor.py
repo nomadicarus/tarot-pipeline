@@ -1,55 +1,35 @@
-"""
-pipeline/compositor.py — card compositing stage.
-"""
-
 import base64
 import io
 import json
 import logging
 import pathlib
 import re
-import sys
 from functools import lru_cache
-from typing import Optional
+from typing import Optional, Tuple
 
 import numpy as np
 from PIL import Image, ImageFilter
 
+# NOTE: Requires 'pip install cairosvg' for math-based SVG rendering
+try:
+    import cairosvg
+except ImportError:
+    cairosvg = None
+
 logger = logging.getLogger(__name__)
 
-ROOT = pathlib.Path(__file__).parent.parent
-sys.path.insert(0, str(ROOT))
+# ── CONFIGURATION ──────────────────────────────────────────────────────────
 
-# ─────────────────────────────────────────────────────────────────
-# ★  SIZING & PADDING VARIABLES  ★
-# ─────────────────────────────────────────────────────────────────
-
-CARD_W = 734  # card frame canvas width (px)
-CARD_H = 1024  # card frame canvas height (px)
-
-PAD_ART_W = 50  # horizontal padding inside frame
-PAD_ART_H = 50  # vertical padding inside frame
-
-ART_W = CARD_W - (PAD_ART_W * 2)
-ART_H = CARD_H - (PAD_ART_H * 2)
-
-ART_OFFSET_X = PAD_ART_W
-ART_OFFSET_Y = PAD_ART_H
-
-# ─────────────────────────────────────────────────────────────────
-# ★  DROP SHADOW SETTINGS  ★
-# ─────────────────────────────────────────────────────────────────
-
+PAD_INTERNAL = 100  # Margin between the frame's 'ink' edge and the start of the art
 SHADOW_RADIUS = 2
-SHADOW_OFFSET_X = 2
-SHADOW_OFFSET_Y = 2
-SHADOW_COLOR = (0, 0, 0)
+SHADOW_OFFSET = (2, 2)
+SHADOW_COLOR = (0, 0, 0, 180)  # Subtle black shadow
 
-# ── HELPERS ──────────────────────────────────────────────────────────────
+# ── HELPERS ────────────────────────────────────────────────────────────────
 
 
-def _scan_raw(raw_dir):
-    SUPPORTED_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+def _scan_raw(raw_dir: pathlib.Path):
+    SUPPORTED_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".tiff"}
     return [
         p
         for p in raw_dir.iterdir()
@@ -57,167 +37,206 @@ def _scan_raw(raw_dir):
     ]
 
 
-def _infer_name(path):
-    return path.stem.replace("_", " ").replace("-", " ").strip().lower()
-
-
-def _load_mapping(mapping_path):
+def _load_mapping(mapping_path: str):
     if not mapping_path:
         return {}
     try:
-        path = pathlib.Path(mapping_path)
-        if not path.exists():
-            return {}
-        with open(path, "r", encoding="utf-8") as f:
+        with open(mapping_path, "r", encoding="utf-8") as f:
             return json.load(f)
     except Exception as e:
-        logger.warning(f"Mapping load failed: {e}")
+        logger.error(f"Failed to load mapping: {e}")
         return {}
 
 
-@lru_cache(maxsize=1)
-def _load_frame(svg_path: str) -> Image.Image:
-    """Extract embedded PNG from SVG and cache it."""
-    svg_text = pathlib.Path(svg_path).read_text()
+def _load_frame(svg_path: str, target_size: Tuple[int, int]) -> Image.Image:
+    """
+    Loads SVG. If it's a vector, it rasterizes at target_size for maximum crispness.
+    If it's a wrapper, it extracts the embedded PNG.
+    """
+    svg_path = pathlib.Path(svg_path)
+    svg_text = svg_path.read_text()
+
+    # 1. Check for legacy Base64 Wrapper
     match = re.search(r'data:image/png;base64,([^"\']+)', svg_text)
-    if not match:
-        raise ValueError(f"No embedded PNG found in SVG: {svg_path}")
-    frame = Image.open(io.BytesIO(base64.b64decode(match.group(1)))).convert("RGBA")
-    if frame.size != (CARD_W, CARD_H):
-        frame = frame.resize((CARD_W, CARD_H), Image.LANCZOS)
-    return frame
+    if match:
+        return Image.open(io.BytesIO(base64.b64decode(match.group(1)))).convert("RGBA")
+
+    # 2. Handle Pure Vector SVG
+    if cairosvg is None:
+        raise ImportError(
+            "Vector SVG detected but 'cairosvg' is not installed. Run: pip install cairosvg"
+        )
+
+    # We render the SVG at the requested width to ensure math-based paths stay sharp
+    png_data = cairosvg.svg2png(url=str(svg_path), output_width=target_size[0])
+    return Image.open(io.BytesIO(png_data)).convert("RGBA")
+
+
+def _get_template_metrics(
+    frame: Image.Image,
+    max_w: int,
+    max_h: int,
+    pad_edge_arg: Optional[int],
+    pad_int_arg: int,
+):
+    """
+    Calculates the geometry using the visible 'ink' of the SVG.
+    """
+    bbox = frame.getbbox()
+    if not bbox:
+        raise ValueError("Template appears to be empty.")
+
+    # 1. Determine native 'ink' size
+    native_w, native_h = frame.size
+    vis_w = bbox[2] - bbox[0]
+    vis_h = bbox[3] - bbox[1]
+
+    # 2. Scale based on the VISIBLE frame fitting into the max_w/max_h
+    scale = min(max_w / vis_w, max_h / vis_h)
+
+    # 3. Apply the CLI pad_edge (gutter)
+    # If pad_edge is 100, the final file will be (scaled_ink + 200)
+    gutter = int((pad_edge_arg if pad_edge_arg is not None else 0) * scale)
+
+    final_w = int(vis_w * scale) + (gutter * 2)
+    final_h = int(vis_h * scale) + (gutter * 2)
+
+    # 4. Scale the internal art padding
+    scaled_pad_int = int(pad_int_arg * scale)
+
+    return {
+        "target_file_size": (final_w, final_h),
+        "art_size": (
+            int(vis_w * scale) - (scaled_pad_int * 2),
+            int(vis_h * scale) - (scaled_pad_int * 2),
+        ),
+        "pad_internal": scaled_pad_int,
+        "gutter": gutter,
+        "crop_box": bbox,
+        "scale": scale,
+    }
 
 
 def _apply_shadow(img: Image.Image) -> Image.Image:
-    """Applies drop shadow while preserving transparency."""
-    pad = SHADOW_RADIUS * 3 + max(abs(SHADOW_OFFSET_X), abs(SHADOW_OFFSET_Y)) + 4
-    W, H = img.size
-    cw, ch = W + pad * 2, H + pad * 2
+    """Adds a drop shadow to the finished card."""
+    pad = SHADOW_RADIUS * 4
+    canvas_size = (img.width + pad * 2, img.height + pad * 2)
 
-    # Create shadow mask from original alpha
-    shadow_mask = Image.new("L", (cw, ch), 0)
-    shadow_mask.paste(img.split()[3], (pad + SHADOW_OFFSET_X, pad + SHADOW_OFFSET_Y))
+    # Create shadow layer
+    shadow_mask = Image.new("L", canvas_size, 0)
+    shadow_mask.paste(img.split()[3], (pad + SHADOW_OFFSET[0], pad + SHADOW_OFFSET[1]))
     shadow_blur = shadow_mask.filter(ImageFilter.GaussianBlur(SHADOW_RADIUS))
 
-    # Shadow layer
-    shadow_layer = Image.new("RGBA", (cw, ch), SHADOW_COLOR + (0,))
+    shadow_layer = Image.new("RGBA", canvas_size, SHADOW_COLOR)
     shadow_layer.putalpha(shadow_blur)
 
-    # Composite on transparent base
-    base_canvas = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
-    final_canvas = Image.alpha_composite(base_canvas, shadow_layer)
-
-    # Place card on top
-    card_layer = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
-    card_layer.paste(img, (pad, pad))
-
-    return Image.alpha_composite(final_canvas, card_layer)
+    # Composite card over shadow
+    final = Image.new("RGBA", canvas_size, (0, 0, 0, 0))
+    final.alpha_composite(shadow_layer)
+    final.paste(img, (pad, pad), mask=img)
+    return final
 
 
-# ── PUBLIC API ───────────────────────────────────────────────────────────
+# ── PUBLIC API ─────────────────────────────────────────────────────────────
 
 
-def composite_card(raw_path, svg_path, output_path, add_shadow=True):
-    """Composites art with frame using the frame as an alpha mask."""
+def composite_card(
+    raw_path,
+    svg_path,
+    output_path,
+    width=734,
+    height=1024,
+    pad_edge=None,
+    pad_internal=30,
+    add_shadow=True,
+):
     try:
-        output_path = pathlib.Path(output_path)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
+        # Load SVG (Rendered large enough to get clean metrics)
+        frame_raw = _load_frame(svg_path, (width, height))
 
-        # 1. Load assets
-        frame = _load_frame(str(svg_path))
-        art = Image.open(raw_path).convert("RGBA")
+        # Pass the 5 arguments now required by the metrics function
+        m = _get_template_metrics(frame_raw, width, height, pad_edge, pad_internal)
 
-        # 2. Use frame alpha as clipping mask for the art
-        frame_mask = frame.split()[3]
-        art_mask = frame_mask.resize((ART_W, ART_H), Image.LANCZOS)
+        # Crop to ink and resize to the 'visible' portion of our target
+        ink_w = m["target_file_size"][0] - (m["gutter"] * 2)
+        ink_h = m["target_file_size"][1] - (m["gutter"] * 2)
+        frame_ink = frame_raw.crop(m["crop_box"]).resize((ink_w, ink_h), Image.LANCZOS)
 
-        # 3. Resize and clip art
-        art_resized = art.resize((ART_W, ART_H), Image.LANCZOS)
-        art_final = Image.new("RGBA", (ART_W, ART_H), (0, 0, 0, 0))
-        art_final.paste(art_resized, (0, 0), mask=art_mask)
+        # 1. Create the Final Canvas (includes the pad-edge/gutter)
+        canvas = Image.new("RGBA", m["target_file_size"], (0, 0, 0, 0))
 
-        # 4. Composite Layers
-        canvas = Image.new("RGBA", (CARD_W, CARD_H), (0, 0, 0, 0))
-        canvas.alpha_composite(frame)
-        canvas.alpha_composite(art_final, dest=(ART_OFFSET_X, ART_OFFSET_Y))
+        # 2. Prepare the Art Mask (Derived from frame's alpha)
+        full_mask = frame_ink.split()[3]
+        p_int = m["pad_internal"]
+        mask_box = (p_int, p_int, ink_w - p_int, ink_h - p_int)
+        art_mask = full_mask.crop(mask_box).resize(m["art_size"], Image.LANCZOS)
 
-        # 5. Add Shadow
+        # 3. Process Art
+        art = Image.open(raw_path).convert("RGBA").resize(m["art_size"], Image.LANCZOS)
+        art_clipped = Image.new("RGBA", m["art_size"], (0, 0, 0, 0))
+        art_clipped.paste(art, (0, 0), mask=art_mask)
+
+        # 4. Assembly
+        # Place frame centered in the gutter
+        canvas.alpha_composite(frame_ink, dest=(m["gutter"], m["gutter"]))
+        # Place art inside the frame + internal padding
+        canvas.alpha_composite(
+            art_clipped, dest=(m["gutter"] + p_int, m["gutter"] + p_int)
+        )
+
         if add_shadow:
             canvas = _apply_shadow(canvas)
 
         canvas.save(output_path, "PNG", optimize=True)
-        logger.info(f"Composited: {output_path.name}")
         return True
-
     except Exception as e:
-        logger.error(f"Composite failed for {raw_path.name}: {e}")
+        logger.error(f"Failed {raw_path.name}: {e}")
+        import traceback
+
+        logger.error(traceback.format_exc())  # Helpful for debugging math errors
         return False
 
 
-def composite_batch(
-    raw_dir,
-    output_dir,
-    svg_path,
-    deck_id=None,
-    deck_type=None,
-    arcana=None,
-    suit=None,
-    card_names=None,
-    force=False,
-    add_shadow=True,
-    mapping_path=None,
-    force_raw=False,
-    preview=False,
-):
-    """Processes multiple cards with metadata filtering or raw bypass."""
+def composite_batch(raw_dir, output_dir, svg_path, **kwargs):
+    """Orchestrates batch compositing for a deck."""
     from pipeline.manifest import read_metadata
 
-    raw_dir, output_dir = pathlib.Path(raw_dir), pathlib.Path(output_dir)
-    mapping = _load_mapping(mapping_path)
-    raw_candidates = _scan_raw(raw_dir)
-    selected = []
+    raw_dir = pathlib.Path(raw_dir)
+    output_dir = pathlib.Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    for path in raw_candidates:
-        # --- 1. FORCE RAW PATHWAY ---
-        if force_raw:
-            selected.append(path)
-            if preview:
-                logger.info(f"[FORCE] {path.name} -> Added (bypass)")
-            continue
+    mapping = _load_mapping(kwargs.get("mapping_path"))
+    files = _scan_raw(raw_dir)
 
-        # --- 2. GOVERNANCE PATHWAY ---
-        source, meta = "filename", {}
-        if path.name in mapping:
-            meta, source = mapping[path.name], "mapping"
-        else:
-            meta = read_metadata(path)
-            if meta and meta.get("card_name"):
-                source = "metadata"
+    succeeded, skipped, failed = 0, 0, 0
 
-        name = (meta.get("card_name") or _infer_name(path)).lower()
-        matched, reason = True, ""
+    for path in files:
+        # Metadata Filtering
+        if not kwargs.get("force_raw"):
+            meta = mapping.get(path.name) or read_metadata(path)
+            if kwargs.get("deck_id") and meta.get("deck_id") != kwargs.get("deck_id"):
+                continue
+            if kwargs.get("card_names"):
+                names = [n.lower() for n in kwargs["card_names"]]
+                if meta.get("card_name", "").lower() not in names:
+                    continue
 
-        if card_names and name not in [c.lower() for c in card_names]:
-            matched, reason = False, f"name '{name}' not in filter"
-        if matched and deck_id and meta.get("deck_id") != deck_id:
-            matched, reason = False, f"deck mismatch: {meta.get('deck_id')}"
-
-        if preview:
-            status = "MATCH" if matched else "SKIP"
-            logger.info(f"[{status}] {path.name} -> {name} ({source}) {reason}")
-        if matched:
-            selected.append(path)
-
-    if preview or not selected:
-        return len(selected), 0, 0
-
-    succeeded = skipped = failed = 0
-    for raw_path in selected:
-        out_path = output_dir / f"{raw_path.stem}.png"
-        if out_path.exists() and not force:
+        out_path = output_dir / f"{path.stem}.png"
+        if out_path.exists() and not kwargs.get("force"):
             skipped += 1
             continue
-        if composite_card(raw_path, svg_path, out_path, add_shadow):
+
+        success = composite_card(
+            raw_path=path,
+            svg_path=svg_path,
+            output_path=out_path,
+            width=kwargs.get("target_size", (734, 1024))[0],
+            height=kwargs.get("target_size", (734, 1024))[1],
+            pad_edge=kwargs.get("pad_edge"),
+            add_shadow=kwargs.get("add_shadow", True),
+        )
+
+        if success:
             succeeded += 1
         else:
             failed += 1

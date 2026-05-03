@@ -1,83 +1,66 @@
-"""
-main.py — top-level entry point for the tarot card pipeline.
-
-Stages are now independent and CLI-selectable:
-
-    python main.py --generate                          # generate raw art only
-    python main.py --composite                         # composite all /raw images
-    python main.py --generate --composite              # full pipeline (generate then composite)
-
-    # Deck filtering
-    python main.py --generate --deck thoth claymation
-    python main.py --composite --deck thoth
-
-    # Card filtering
-    python main.py --generate --card "The Fool" "The Magus"
-    python main.py --composite --suit wands
-    python main.py --composite --arcana major
-    python main.py --composite --deck thoth --cards "The Fool"
-
-    # Force regeneration/recomposite
-    python main.py --generate --force
-    python main.py --composite --force
-
-    # Guardrail override
-    python main.py --generate --guardrail off
-
-Default behaviour (no flags): --generate only.
-
-Requirements:
-    pip install google-genai Pillow Jinja2 python-dotenv tqdm cairosvg
-
-Environment:
-    GEMINI_API_KEY must be set in .env or as an environment variable.
-
-Output structure:
-    output/
-    ├── lego_explosive/
-    │   ├── raw/                  ← raw art from Gemini API
-    │   ├── the_fool.png          ← final composited card
-    │   └── ...
-    ├── thoth/
-    │   ├── raw/
-    │   └── ...
-
-"""
-
 import argparse
 import logging
+import pathlib
+import sys
 
 from pipeline.runner import run
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Tarot pipeline")
+    parser = argparse.ArgumentParser(description="Deck Generator & Compositor")
 
-    parser.add_argument("--generate", action="store_true")
-    parser.add_argument("--composite", action="store_true")
+    # Modes
+    parser.add_argument("--generate", action="store_true", help="Run image generation")
+    parser.add_argument("--composite", action="store_true", help="Run compositing")
 
-    parser.add_argument("--deck", type=str, help="Deck ID")
-    parser.add_argument("--card", nargs="*", help="Card names")
-    parser.add_argument("--force", action="store_true")
-    parser.add_argument("--no-metadata", action="store_true")
+    # Filtering
+    parser.add_argument("--deck", type=str, help="Deck ID (e.g., thoth)")
+    parser.add_argument("--card", nargs="*", help="Specific card names to process")
+
+    # Config & Metadata
+    parser.add_argument("--force", action="store_true", help="Overwrite existing files")
+    parser.add_argument(
+        "--no-metadata", action="store_true", help="Skip writing iTXt metadata"
+    )
     parser.add_argument("--mapping", type=str, help="Path to metadata mapping JSON")
     parser.add_argument(
         "--force-raw",
         action="store_true",
-        help="Bypass filtering and process all raw files",
+        help="Bypass filtering; process all raw files",
     )
     parser.add_argument(
-        "--preview",
-        action="store_true",
-        help="Show what would be processed without running",
+        "--preview", action="store_true", help="Show what would be processed"
+    )
+
+    # Sizing & Template
+    parser.add_argument(
+        "--template", type=str, default="assets/cardface.svg", help="SVG template path"
+    )
+    parser.add_argument("--width", type=int, default=734, help="Target output width")
+    parser.add_argument("--height", type=int, default=1024, help="Target output height")
+    parser.add_argument(
+        "--pad-edge", type=int, default=None, help="Gutter width in pixels"
+    )
+    parser.add_argument(
+        "--pad-internal", type=int, default=30, help="Internal art margin"
     )
 
     args = parser.parse_args()
-    cards = args.card if args.card else None
+
+    # Default to generate if no mode is specified
     if not args.generate and not args.composite:
         args.generate = True
+
+    template_path = pathlib.Path(args.template)
+    if not template_path.exists():
+        print(f"Error: Template {args.template} not found.")
+        sys.exit(1)
+
+    # Convert card list to None if empty for cleaner runner logic
+    cards = args.card if args.card else None
+
     run(
         generate=args.generate,
         composite=args.composite,
@@ -88,6 +71,12 @@ def main():
         mapping_path=args.mapping,
         force_raw=args.force_raw,
         preview=args.preview,
+        template=str(template_path),
+        width=args.width,
+        height=args.height,
+        add_shadow=getattr(args, "add_shadow", True),
+        pad_edge=args.pad_edge,
+        pad_internal=args.pad_internal,  # Pass this through!
     )
 
 
