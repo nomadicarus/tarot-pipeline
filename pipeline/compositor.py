@@ -27,11 +27,11 @@ sys.path.insert(0, str(ROOT))
 CARD_W = 734  # card frame canvas width (px)
 CARD_H = 1024  # card frame canvas height (px)
 
-PAD_ART_W = 45  # horizontal padding inside frame
-PAD_ART_H = 45  # vertical padding inside frame
+PAD_ART_W = 50  # horizontal padding inside frame
+PAD_ART_H = 50  # vertical padding inside frame
 
-ART_W = CARD_W - (PAD_ART_W)
-ART_H = CARD_H - (PAD_ART_H)
+ART_W = CARD_W - (PAD_ART_W * 2)
+ART_H = CARD_H - (PAD_ART_H * 2)
 
 ART_OFFSET_X = PAD_ART_W
 ART_OFFSET_Y = PAD_ART_H
