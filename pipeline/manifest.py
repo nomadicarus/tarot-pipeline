@@ -57,6 +57,7 @@ FIELDS = [
 
 # ── prompt hash ────────────────────────────────────────────────────────────
 
+
 def prompt_hash(prompt: str) -> str:
     """Return first 8 chars of sha256 of the prompt."""
     return hashlib.sha256(prompt.encode()).hexdigest()[:8]
@@ -73,9 +74,9 @@ def _make_itxt_chunk(keyword: str, text: str) -> bytes:
     """Build a raw PNG iTXt chunk."""
     # iTXt structure: keyword \x00 \x00 \x00 "" \x00 text (UTF-8, uncompressed)
     keyword_bytes = keyword.encode("latin-1")
-    text_bytes    = text.encode("utf-8")
+    text_bytes = text.encode("utf-8")
     data = keyword_bytes + b"\x00\x00\x00\x00\x00" + text_bytes
-    crc  = zlib.crc32(b"iTXt" + data) & 0xFFFFFFFF
+    crc = zlib.crc32(b"iTXt" + data) & 0xFFFFFFFF
     return struct.pack(">I", len(data)) + b"iTXt" + data + struct.pack(">I", crc)
 
 
@@ -83,18 +84,18 @@ def _parse_itxt_chunk(data: bytes) -> Optional[tuple]:
     """Parse an iTXt chunk's data bytes. Returns (keyword, text) or None."""
     try:
         null_pos = data.index(b"\x00")
-        keyword  = data[:null_pos].decode("latin-1")
+        keyword = data[:null_pos].decode("latin-1")
         # Skip: null, compression_flag, compression_method, language_tag null, translated_keyword null
-        rest = data[null_pos + 1:]
+        rest = data[null_pos + 1 :]
         # compression_flag
         comp_flag = rest[0]
         rest = rest[2:]  # skip compression_flag + compression_method
         # find end of language tag (null terminated)
         lang_end = rest.index(b"\x00")
-        rest = rest[lang_end + 1:]
+        rest = rest[lang_end + 1 :]
         # find end of translated keyword (null terminated)
         tkey_end = rest.index(b"\x00")
-        text_bytes = rest[tkey_end + 1:]
+        text_bytes = rest[tkey_end + 1 :]
         if comp_flag == 1:
             text_bytes = zlib.decompress(text_bytes)
         return keyword, text_bytes.decode("utf-8")
@@ -130,20 +131,18 @@ def write_metadata(
 
     # Build metadata dict
     meta = {
-        "card_name":    card["name"],
-        "card_number":  str(card["number"]),
-        "arcana":       card.get("arcana", ""),
-        "suit":         card.get("suit", ""),
-        "deck_type":    deck_type,
-        "deck_id":      deck["id"],
-        "prompt_hash":  prompt_hash(prompt),
+        "card_name": card["name"],
+        "card_number": str(card["number"]),
+        "arcana": card.get("arcana", ""),
+        "suit": card.get("suit", ""),
+        "deck_type": deck_type,
+        "deck_id": deck["id"],
+        "prompt_hash": prompt_hash(prompt),
         "generated_at": datetime.now(tz=PT).isoformat(),
     }
 
     # Build iTXt chunks
-    itxt_chunks = b"".join(
-        _make_itxt_chunk(k, v) for k, v in meta.items()
-    )
+    itxt_chunks = b"".join(_make_itxt_chunk(k, v) for k, v in meta.items())
 
     # Find insertion point: after signature (8) + IHDR chunk (4+4+13+4 = 25)
     insert_pos = 8 + 25  # after PNG sig + IHDR
@@ -165,12 +164,12 @@ def read_metadata(png_path: pathlib.Path) -> dict:
             return {}
 
         meta = {}
-        pos  = 8  # skip signature
+        pos = 8  # skip signature
 
         while pos < len(raw) - 12:
-            length = struct.unpack(">I", raw[pos:pos+4])[0]
-            chunk_type = raw[pos+4:pos+8]
-            chunk_data = raw[pos+8:pos+8+length]
+            length = struct.unpack(">I", raw[pos : pos + 4])[0]
+            chunk_type = raw[pos + 4 : pos + 8]
+            chunk_data = raw[pos + 8 : pos + 8 + length]
 
             if chunk_type == b"iTXt":
                 result = _parse_itxt_chunk(chunk_data)
@@ -191,6 +190,7 @@ def read_metadata(png_path: pathlib.Path) -> dict:
 
 # ── manifest builder ───────────────────────────────────────────────────────
 
+
 def build_manifest(raw_dir: pathlib.Path) -> dict:
     """
     Scan a /raw directory and build a manifest from PNG iTXt metadata.
@@ -206,7 +206,7 @@ def build_manifest(raw_dir: pathlib.Path) -> dict:
         }
     """
     raw_dir = pathlib.Path(raw_dir)
-    cards   = []
+    cards = []
 
     for png in sorted(raw_dir.glob("*.png")):
         meta = read_metadata(png)
@@ -215,22 +215,24 @@ def build_manifest(raw_dir: pathlib.Path) -> dict:
             cards.append(meta)
         else:
             # No iTXt metadata — include file with unknown fields
-            cards.append({
-                "file":         png.name,
-                "card_name":    "unknown",
-                "card_number":  "unknown",
-                "arcana":       "unknown",
-                "suit":         "unknown",
-                "deck_type":    "unknown",
-                "deck_id":      "unknown",
-                "prompt_hash":  "unknown",
-                "generated_at": "unknown",
-            })
+            cards.append(
+                {
+                    "file": png.name,
+                    "card_name": "unknown",
+                    "card_number": "unknown",
+                    "arcana": "unknown",
+                    "suit": "unknown",
+                    "deck_type": "unknown",
+                    "deck_id": "unknown",
+                    "prompt_hash": "unknown",
+                    "generated_at": "unknown",
+                }
+            )
 
     return {
         "generated_at": datetime.now(tz=PT).isoformat(),
-        "total":        len(cards),
-        "cards":        cards,
+        "total": len(cards),
+        "cards": cards,
     }
 
 
@@ -239,7 +241,7 @@ def save_manifest(raw_dir: pathlib.Path) -> pathlib.Path:
     Build and save manifest.json into raw_dir.
     Returns path to the saved manifest file.
     """
-    raw_dir  = pathlib.Path(raw_dir)
+    raw_dir = pathlib.Path(raw_dir)
     manifest = build_manifest(raw_dir)
     out_path = raw_dir / "manifest.json"
     out_path.write_text(json.dumps(manifest, indent=2))
@@ -248,15 +250,16 @@ def save_manifest(raw_dir: pathlib.Path) -> pathlib.Path:
 
 # ── filter helper ──────────────────────────────────────────────────────────
 
+
 def filter_raw(
     raw_dir: pathlib.Path,
-    card_name:   Optional[str]       = None,
-    card_number: Optional[str]       = None,
-    arcana:      Optional[str]       = None,
-    suit:        Optional[str]       = None,
-    deck_type:   Optional[str]       = None,
-    deck_id:     Optional[str]       = None,
-    card_names:  Optional[list]      = None,
+    card_name: Optional[str] = None,
+    card_number: Optional[str] = None,
+    arcana: Optional[str] = None,
+    suit: Optional[str] = None,
+    deck_type: Optional[str] = None,
+    deck_id: Optional[str] = None,
+    card_names: Optional[list] = None,
 ) -> list:
     """
     Filter PNG files in raw_dir by metadata field values.
@@ -315,7 +318,8 @@ def filter_raw(
 # ── CLI ────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    import argparse, sys
+    import argparse
+    import sys
 
     parser = argparse.ArgumentParser(description="Manifest tools for raw card images")
     sub = parser.add_subparsers(dest="command")
@@ -331,11 +335,11 @@ if __name__ == "__main__":
     # manifest filter
     p_filter = sub.add_parser("filter", help="List PNGs matching filter criteria")
     p_filter.add_argument("raw_dir")
-    p_filter.add_argument("--deck-id",     default=None)
-    p_filter.add_argument("--deck-type",   default=None)
-    p_filter.add_argument("--suit",        default=None)
-    p_filter.add_argument("--arcana",      default=None)
-    p_filter.add_argument("--card-name",   default=None)
+    p_filter.add_argument("--deck-id", default=None)
+    p_filter.add_argument("--deck-type", default=None)
+    p_filter.add_argument("--suit", default=None)
+    p_filter.add_argument("--arcana", default=None)
+    p_filter.add_argument("--card-name", default=None)
     p_filter.add_argument("--card-number", default=None)
 
     args = parser.parse_args()

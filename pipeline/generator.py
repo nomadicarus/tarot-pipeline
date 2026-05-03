@@ -6,7 +6,6 @@ from typing import List
 
 logger = logging.getLogger(__name__)
 
-from pipeline.generator import generate_card_image
 from prompts.builder import build_prompt
 
 

@@ -30,7 +30,7 @@ Default behaviour (no flags): --generate only.
 import logging
 import pathlib
 
-from pipeline.compositor import run_composite
+from pipeline.compositor import infer_metadata_from_filename, run_composite
 from pipeline.generator import generate_batch
 
 logger = logging.getLogger(__name__)
@@ -66,6 +66,7 @@ def validate_raw_directory(raw_dir):
 
         if not meta:
             issues.append((file.name, "missing metadata"))
+            meta = infer_metadata_from_filename(file)
 
     return issues
 
