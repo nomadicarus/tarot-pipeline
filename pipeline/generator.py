@@ -10,6 +10,7 @@ Public API:
 
 Quota gating, retry logic and cost tracking are handled internally.
 All settings are read from config/settings.py.
+--refactor soon
 """
 
 import logging
