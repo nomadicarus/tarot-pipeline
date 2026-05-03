@@ -8,11 +8,11 @@ Stages are now independent and CLI-selectable:
     python main.py --generate --composite              # full pipeline (generate then composite)
 
     # Deck filtering
-    python main.py --generate --decks thoth claymation
-    python main.py --composite --decks thoth
+    python main.py --generate --deck thoth claymation
+    python main.py --composite --deck thoth
 
     # Card filtering
-    python main.py --generate --cards "The Fool" "The Magus"
+    python main.py --generate --card "The Fool" "The Magus"
     python main.py --composite --suit wands
     python main.py --composite --arcana major
     python main.py --composite --deck thoth --cards "The Fool"
@@ -60,19 +60,34 @@ def main():
 
     parser.add_argument("--deck", type=str, help="Deck ID")
     parser.add_argument("--card", nargs="*", help="Card names")
-
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--no-metadata", action="store_true")
+    parser.add_argument("--mapping", type=str, help="Path to metadata mapping JSON")
+    parser.add_argument(
+        "--force-raw",
+        action="store_true",
+        help="Bypass filtering and process all raw files",
+    )
+    parser.add_argument(
+        "--preview",
+        action="store_true",
+        help="Show what would be processed without running",
+    )
 
     args = parser.parse_args()
-
+    cards = args.card if args.card else None
+    if not args.generate and not args.composite:
+        args.generate = True
     run(
         generate=args.generate,
         composite=args.composite,
         deck=args.deck,
-        cards=args.card,
+        cards=cards,
         force=args.force,
         no_metadata=args.no_metadata,
+        mapping_path=args.mapping,
+        force_raw=args.force_raw,
+        preview=args.preview,
     )
 
 
