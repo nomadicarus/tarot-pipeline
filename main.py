@@ -41,15 +41,33 @@ def main():
     parser.add_argument("--width", type=int, default=734, help="Target output width")
     parser.add_argument("--height", type=int, default=1024, help="Target output height")
     parser.add_argument(
-        "--pad-edge", type=int, default=None, help="Gutter width in pixels"
+        "--pad-edge", type=int, default=13, help="Gutter width in pixels"
     )
     parser.add_argument(
         "--pad-internal", type=int, default=30, help="Internal art margin"
     )
 
+    # Shadow Controls
+    parser.add_argument(
+        "--no-shadow",
+        action="store_false",
+        dest="add_shadow",
+        help="Disable drop shadow",
+    )
+    parser.add_argument(
+        "--shadow-radius", type=int, default=5, help="Blur radius of the shadow"
+    )
+    parser.add_argument(
+        "--shadow-offset-x", type=int, default=3, help="Horizontal shadow offset"
+    )
+    parser.add_argument(
+        "--shadow-offset-y", type=int, default=3, help="Vertical shadow offset"
+    )
+    parser.set_defaults(add_shadow=True)
+
     args = parser.parse_args()
 
-    # Default to generate if no mode is specified
+    # Default behavior: if no mode selected, default to generate
     if not args.generate and not args.composite:
         args.generate = True
 
@@ -58,14 +76,11 @@ def main():
         print(f"Error: Template {args.template} not found.")
         sys.exit(1)
 
-    # Convert card list to None if empty for cleaner runner logic
-    cards = args.card if args.card else None
-
     run(
         generate=args.generate,
         composite=args.composite,
         deck=args.deck,
-        cards=cards,
+        cards=args.card if args.card else None,
         force=args.force,
         no_metadata=args.no_metadata,
         mapping_path=args.mapping,
@@ -74,9 +89,13 @@ def main():
         template=str(template_path),
         width=args.width,
         height=args.height,
-        add_shadow=getattr(args, "add_shadow", True),
         pad_edge=args.pad_edge,
-        pad_internal=args.pad_internal,  # Pass this through!
+        pad_internal=args.pad_internal,
+        # New Shadow Args
+        add_shadow=args.add_shadow,
+        shadow_radius=args.shadow_radius,
+        shadow_offset_x=args.shadow_offset_x,
+        shadow_offset_y=args.shadow_offset_y,
     )
 
 
