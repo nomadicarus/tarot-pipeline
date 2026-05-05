@@ -4,7 +4,7 @@ import logging
 import pathlib
 import re
 
-from PIL import Image, ImageFilter
+from PIL import Image, ImageDraw, ImageFilter
 
 try:
     import cairosvg
@@ -25,6 +25,20 @@ def _get_svg_aspect(svg_path):
     return 734 / 1024  # fallback
 
 
+def _frame_native_size(svg_path: str) -> tuple[int, int]:
+    """Return the intrinsic dimensions of the template (SVG viewBox or PNG size)."""
+    p = pathlib.Path(svg_path)
+    if p.suffix.lower() == ".png":
+        with Image.open(p) as img:
+            return img.size
+    if p.suffix.lower() == ".svg":
+        text = pathlib.Path(svg_path).read_text()
+        m = re.search(r'viewBox="[\d.]+ [\d.]+ ([\d.]+) ([\d.]+)"', text)
+        if m:
+            return int(float(m.group(1))), int(float(m.group(2)))
+    return 734, 1024  # fallback
+
+
 def _parse_unit(value, ref):
     if isinstance(value, (int, float)):
         return float(value)
@@ -36,27 +50,46 @@ def _parse_unit(value, ref):
     return num * ref / 100 if unit == "%" else num
 
 
-def _load_frame(svg_path: str, target_size: tuple[int, int]) -> Image.Image:
+def _load_frame(svg_path: str, target_size: tuple[int, int] | None = None, stretch: bool = False) -> Image.Image:
     p = pathlib.Path(svg_path)
     ext = p.suffix.lower()
 
-    # PNG path (simple)
     if ext == ".png":
-        return Image.open(p).convert("RGBA").resize(target_size, Image.LANCZOS)
+        img = Image.open(p).convert("RGBA")
+        if target_size:
+            return img.resize(target_size, Image.LANCZOS)
+        return img
 
     if ext == ".svg":
         if cairosvg is None:
             raise ImportError("cairosvg required for SVG rendering")
 
-        png_bytes = cairosvg.svg2png(
-            url=str(p),
-            output_width=target_size[0],
-            output_height=target_size[1],
-        )
+        kwargs = {}
+        if target_size and not stretch:
+            kwargs["output_width"] = target_size[0]
+            kwargs["output_height"] = target_size[1]
 
-        return Image.open(io.BytesIO(png_bytes)).convert("RGBA")
+        png_bytes = cairosvg.svg2png(url=str(p), **kwargs)
+        img = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
+
+        if target_size and stretch:
+            img = img.resize(target_size, Image.LANCZOS)
+
+        return img
 
     raise ValueError(f"Unsupported format: {ext}")
+
+
+def _extract_inner_mask(frame: Image.Image) -> Image.Image:
+    """Extract the inner aperture mask from the rendered frame.
+
+    The card interior is bright white, the border stroke is dark.
+    Threshold the luminance to get the inner aperture shape including
+    curved corners.
+    """
+    grey = frame.convert("L")
+    mask = grey.point(lambda p: 255 if p > 200 else 0)
+    return mask
 
 
 def composite_card(raw_path, svg_path, output_path, **kw):
@@ -67,26 +100,26 @@ def composite_card(raw_path, svg_path, output_path, **kw):
 
         # --- sizing ---
         if fixed:
-            tw, th = kw["width_f"], kw["height_f"]
+            tw, th = kw["fix_size"]
         else:
-            tw, th = kw["width"], kw["height"]
+            ew, eh = kw["size"]
+            nw, nh = _frame_native_size(svg_path)
+            scale_w = ew / nw if ew else 0
+            scale_h = eh / nh if eh else 0
+            scale = max(scale_w, scale_h, 1.0)
+            tw, th = int(nw * scale), int(nh * scale)
 
         canvas = Image.new("RGBA", (tw, th), (0, 0, 0, 0))
 
         # --- edge padding ---
         pad_edge = _parse_unit(kw.get("pad_edge", 0), tw)
 
-        # --- frame scaling ---
-        scale = min(
-            (tw - pad_edge * 2) / frame_raw.width,
-            (th - pad_edge * 2) / frame_raw.height,
-        )
-
-        fw, fh = int(frame_raw.width * scale), int(frame_raw.height * scale)
-        frame = _load_frame(svg_path, (fw, fh))
-
-        fx = (tw - fw) // 2
-        fy = (th - fh) // 2
+        # Frame fills canvas minus pad_edge
+        fw = tw - int(pad_edge * 2)
+        fh = th - int(pad_edge * 2)
+        frame = _load_frame(svg_path, (fw, fh), stretch=fixed)
+        fx = int(pad_edge)
+        fy = int(pad_edge)
 
         # --- shadow ---
         if kw.get("add_shadow", True):
@@ -119,17 +152,18 @@ def composite_card(raw_path, svg_path, output_path, **kw):
 
         art = Image.open(raw_path).convert("RGBA")
 
-        if kw.get("f_crop"):
-            s = max(aw / art.width, ah / art.height)
-        else:
+        if kw.get("contain"):
             s = min(aw / art.width, ah / art.height)
+        else:
+            s = max(aw / art.width, ah / art.height)
 
-        s *= kw.get("art_scale", 1.0)
+        s *= kw.get("scale", 1.0)
 
         art = art.resize((int(art.width * s), int(art.height * s)), Image.LANCZOS)
 
-        nx = _parse_unit(kw.get("art_nudge", ("0", "0"))[0], fw)
-        ny = _parse_unit(kw.get("art_nudge", ("0", "0"))[1], fh)
+        nudge = str(kw.get("nudge", "0,0")).split(",")
+        nx = _parse_unit(nudge[0], fw)
+        ny = _parse_unit(nudge[1], fh)
 
         px = ax0 + (aw - art.width) // 2 + int(nx)
         py = ay0 + (ah - art.height) // 2 + int(ny)
@@ -138,22 +172,15 @@ def composite_card(raw_path, svg_path, output_path, **kw):
         art_layer = Image.new("RGBA", (tw, th), (0, 0, 0, 0))
         art_layer.paste(art, (px, py), art)
 
-        mask = Image.new("L", (tw, th), 0)
-        frame_alpha = frame.split()[3]
+        # Extract inner aperture mask from frame luminance
+        inner_mask = _extract_inner_mask(frame)
 
-        # CRITICAL: crop inner mask, do NOT scale whole frame
-        inner_mask = frame_alpha.crop(
-            (
-                int(pad_int),
-                int(pad_int),
-                int(fw - pad_int),
-                int(fh - pad_int),
-            )
-        )
+        # Position inner_mask on a full-canvas mask
+        full_mask = Image.new("L", (tw, th), 0)
+        full_mask.paste(inner_mask, (fx, fy))
 
-        mask.paste(inner_mask, (ax0, ay0))
-
-        art_layer.putalpha(mask)
+        # Apply mask to art layer
+        art_layer.putalpha(full_mask)
 
         # --- final ---
         canvas.paste(frame, (fx, fy), frame)

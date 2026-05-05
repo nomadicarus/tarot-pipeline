@@ -4,7 +4,7 @@
 Planned actions in priority order. Completed actions move to log-project.
 ---
 ## Immediate — Code
-- [ ] a recent major refactor to modular code and new git branch has confused code. test code to ensure current continuity. example suggested code structure added in refactored_runner.py, refactored_compositor.py and refactored_generator.py
+- [ ] code partially refactored using gemini and chatgpt web interfaces - the main.py, runner.py and compositor.py need review and refactoring to tie everything up.
 
 ---
 ## Near-Term — Features

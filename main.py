@@ -18,27 +18,20 @@ def main():
     parser.add_argument("--card", nargs="*")
 
     parser.add_argument("--force", action="store_true")
-    parser.add_argument("--force-raw", action="store_true")
-    parser.add_argument("--preview", action="store_true")
+    parser.add_argument("--raw", action="store_true", help="Composite all raw PNGs regardless of metadata")
 
     parser.add_argument("--template", type=str, default="assets/cardface.svg")
 
-    # Elastic
-    parser.add_argument("--width", type=int, default=734)
-    parser.add_argument("--height", type=int, default=1024)
-
-    # Fixed
-    parser.add_argument("--width-f", type=int)
-    parser.add_argument("--height-f", type=int)
+    # Sizing
+    parser.add_argument("--size", type=str, default="0,0", help="Elastic canvas size W,H (0=unconstrained)")
+    parser.add_argument("--fix-size", type=str, default=None, help="Fixed canvas size W,H")
 
     parser.add_argument("--pad-edge", type=str, default="0")
     parser.add_argument("--pad-internal", type=str, default="48")
 
-    parser.add_argument("--f-crop", action="store_true")
-    parser.add_argument("--art-scale", type=float, default=1.0)
-
-    parser.add_argument("--art-nudge-x", type=str, default="0")
-    parser.add_argument("--art-nudge-y", type=str, default="0")
+    parser.add_argument("--contain", action="store_true")
+    parser.add_argument("--scale", type=float, default=1.0)
+    parser.add_argument("--nudge", type=str, default="0,0", help="Art nudge as X,Y")
 
     parser.add_argument("--no-shadow", action="store_false", dest="add_shadow")
     parser.add_argument("--shadow-radius", type=str, default="3.8")
@@ -59,7 +52,9 @@ def main():
         sys.exit(1)
 
     # Normalize sizing contract
-    fixed = args.width_f and args.height_f
+    w_el, h_el = (int(x) for x in args.size.split(","))
+    fixed = args.fix_size is not None
+    w_fix, h_fix = (int(x) for x in args.fix_size.split(",")) if fixed else (None, None)
 
     run(
         generate=args.generate,
@@ -67,18 +62,16 @@ def main():
         deck=args.deck,
         cards=args.card,
         force=args.force,
-        force_raw=args.force_raw,
+        raw=args.raw,
         template=str(template_path),
-        width=args.width,
-        height=args.height,
-        width_f=args.width_f,
-        height_f=args.height_f,
+        size=(w_el, h_el),
+        fix_size=(w_fix, h_fix),
         fixed=fixed,
         pad_edge=args.pad_edge,
         pad_internal=args.pad_internal,
-        f_crop=args.f_crop,
-        art_scale=args.art_scale,
-        art_nudge=(args.art_nudge_x, args.art_nudge_y),
+        contain=args.contain,
+        scale=args.scale,
+        nudge=args.nudge,
         add_shadow=args.add_shadow,
         shadow_radius=args.shadow_radius,
         shadow_offset_x=args.shadow_offset_x,

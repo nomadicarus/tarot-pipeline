@@ -39,6 +39,13 @@ AI must acknowledge this has been done before proceeding with any work.
   listing every file that was created or modified, organised by repository, 
   so the user can update local files and push both repos in one go.
 
+## Change Control
+
+Before any file creation, modification, or deletion the AI Agent must:
+- Present the exact change (file path + before/after diff or summary)
+- Await explicit user confirmation before applying
+
+
 ## Session End Protocol
 
 AI Agent must output the following at the end of every session:
