@@ -3,7 +3,9 @@ import io
 import logging
 import pathlib
 import re
+from pickletools import optimize
 
+from cairosvg.image import image
 from PIL import Image, ImageDraw, ImageFilter
 
 try:
@@ -12,6 +14,26 @@ except ImportError:
     cairosvg = None
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------
+# SVG Helpers
+# ---------------------------
+def _modify_svg_preserve_aspect(svg_path: str, stretch: bool) -> bytes:
+    """Return SVG bytes with preserveAspectRatio set for stretch behavior.
+
+    - stretch=True:  set preserveAspectRatio='none' (vector content stretches)
+    - stretch=False: set preserveAspectRatio='xMidYMid meet' (aspect preserved)
+    """
+    import xml.etree.ElementTree as ET
+
+    tree = ET.parse(svg_path)
+    root = tree.getroot()
+    if stretch:
+        root.set("preserveAspectRatio", "none")
+    else:
+        root.set("preserveAspectRatio", "xMidYMid meet")
+    return ET.tostring(root, encoding="utf-8")
 
 
 # ---------------------------
@@ -56,70 +78,160 @@ def _load_frame(
     p = pathlib.Path(svg_path)
     ext = p.suffix.lower()
 
+    if target_size is None:
+        # No sizing requested — return as-is
+        if ext == ".png":
+            return Image.open(p).convert("RGBA")
+        if ext == ".svg":
+            if cairosvg is None:
+                raise ImportError("cairosvg required for SVG rendering")
+            png_bytes = cairosvg.svg2png(url=str(p))
+            return Image.open(io.BytesIO(png_bytes)).convert("RGBA")
+        raise ValueError(f"Unsupported format: {ext}")
+
+    # Determine target render size BEFORE rendering — single resize
+    native_w, native_h = _frame_native_size(svg_path)
+
+    if stretch:
+        # Stretch: render directly at target_size
+        render_w, render_h = target_size
+    else:
+        # Preserve aspect: fit inside target_size
+        scale = min(target_size[0] / native_w, target_size[1] / native_h)
+        render_w, render_h = int(native_w * scale), int(native_h * scale)
+
+    # Render at calculated size (single step)
     if ext == ".png":
         img = Image.open(p).convert("RGBA")
-        if target_size:
-            return img.resize(target_size, Image.LANCZOS)
-        return img
+        if (img.width, img.height) != (render_w, render_h):
+            img = img.resize((render_w, render_h), Image.LANCZOS)
 
-    if ext == ".svg":
+    elif ext == ".svg":
         if cairosvg is None:
             raise ImportError("cairosvg required for SVG rendering")
-
-        kwargs = {}
-        if target_size and not stretch:
-            kwargs["output_width"] = target_size[0]
-            kwargs["output_height"] = target_size[1]
-
-        png_bytes = cairosvg.svg2png(url=str(p), **kwargs)
+        # Modify SVG preserveAspectRatio for proper vector stretching
+        svg_bytes = _modify_svg_preserve_aspect(str(p), stretch=stretch)
+        # Render at target size — SVG vector content is stretched before rasterization
+        png_bytes = cairosvg.svg2png(
+            bytestring=svg_bytes, output_width=render_w, output_height=render_h
+        )
         img = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
 
-        if target_size and stretch:
-            img = img.resize(target_size, Image.LANCZOS)
+    else:
+        raise ValueError(f"Unsupported format: {ext}")
 
-        return img
+    # If not stretching, center on target_size canvas
+    if not stretch and (render_w, render_h) != target_size:
+        centered = Image.new("RGBA", target_size, (0, 0, 0, 0))
+        centered.paste(
+            img,
+            ((target_size[0] - render_w) // 2, (target_size[1] - render_h) // 2),
+        )
+        return centered
 
-    raise ValueError(f"Unsupported format: {ext}")
-
-
-def _extract_inner_mask(frame: Image.Image) -> Image.Image:
-    """Extract the inner aperture mask from the rendered frame.
-
-    Deprecated in favor of template-rendered masks. Kept for backward compat
-    but not used by default masking path.
-    """
-    grey = frame.convert("L")
-    mask = grey.point(lambda p: 255 if p > 200 else 0)
-    return mask
+    return img
 
 
-def _render_mask_from_template(
-    svg_path: str, target_size: tuple[int, int]
+def _generate_mask(
+    svg_path: str,
+    render_size: tuple[int, int],
+    stretch: bool = False,
+    method: str = "alpha",
 ) -> Image.Image:
-    """Render the frame template and return a luminance mask at target_size.
+    """Render template and return a mask at render_size.
 
-    - For SVG: render via cairosvg to target_size, threshold luminance
-    - For PNG: resize to target_size, threshold luminance
-    Returns a single-channel ('L') mask image of size target_size.
-    White = visible aperture region.
+    ALL template types (SVG/PNG) follow the same stretch logic:
+      - stretch=True  → render exactly at render_size (--fix-size mode)
+      - stretch=False → preserve aspect ratio, center on render_size canvas
+
+    Args:
+        svg_path:    Path to SVG or PNG template.
+        render_size:  Frame inner size (fw, fh) to render at.
+        stretch:      If True, stretch to render_size; else preserve aspect ratio.
+        method:       "alpha" (default, clean edges) or "luminance".
+
+    Returns:
+        Single-channel ('L') mask image of size render_size.
+        White (255) = visible aperture region.
     """
     p = pathlib.Path(svg_path)
     ext = p.suffix.lower()
-    if ext == ".svg":
-        if cairosvg is None:
-            raise ImportError("cairosvg required for SVG rendering")
-        png_bytes = cairosvg.svg2png(
-            url=str(p), output_width=target_size[0], output_height=target_size[1]
-        )
-        img = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
-    elif ext == ".png":
-        img = Image.open(p).convert("RGBA").resize(target_size, Image.LANCZOS)
+
+    # Determine target size BEFORE rendering — resize only once
+    native_w, native_h = _frame_native_size(svg_path)
+    scale = 1.0
+
+    if stretch:
+        # Stretch: target is exactly render_size
+        target_w, target_h = render_size
+    else:
+        # Preserve aspect: fit inside render_size
+        scale = min(render_size[0] / native_w, render_size[1] / native_h)
+        target_w, target_h = int(native_w * scale), int(native_h * scale)
+
+    # Render template at target size (single resize)
+    if ext in (".svg", ".png"):
+        if ext == ".svg":
+            if cairosvg is None:
+                raise ImportError("cairosvg required for SVG rendering")
+            # Modify SVG preserveAspectRatio for proper vector stretching
+            svg_bytes = _modify_svg_preserve_aspect(str(p), stretch=stretch)
+            # Render at target size — SVG vector content is stretched before rasterization
+            png_bytes = cairosvg.svg2png(
+                bytestring=svg_bytes, output_width=target_w, output_height=target_h
+            )
+            img = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
+        else:
+            # PNG: open and resize to target in one step
+            img = Image.open(p).convert("RGBA")
+            if (img.width, img.height) != (target_w, target_h):
+                img = img.resize((target_w, target_h), Image.LANCZOS)
+
+        # If not stretching, center on render_size canvas
+        if not stretch and (target_w, target_h) != render_size:
+            centered = Image.new("RGBA", render_size, (0, 0, 0, 0))
+            centered.paste(
+                img,
+                ((render_size[0] - target_w) // 2, (render_size[1] - target_h) // 2),
+            )
+            img = centered
     else:
         raise ValueError(f"Unsupported template format: {ext}")
 
-    grey = img.convert("L")
-    mask = grey.point(lambda v: 255 if v > 200 else 0)
-    return mask
+    # Extract mask by method
+    if method == "alpha":
+        # Use alpha channel directly — clean edges, no threshold
+        return img.split()[3]
+
+    elif method == "alpha2":
+        # Threshold alpha channel: pixels with alpha >= 128 become white
+        # (previous implementation used an impossible threshold v > 255)
+        alpha = img.split()[3]
+        return alpha.point(lambda v: 255 if v >= 200 else 0)
+
+    elif method == "luma":
+        # Luma = (0.2126*R + 0.7152*G + 0.0722*B) * A/255
+        # Pixel-by-pixel calculation (mask generation, performance not critical)
+        luma = Image.new("L", img.size, 0)
+        pixels = luma.load()
+        src = img.load()
+        for x in range(img.width):
+            for y in range(img.height):
+                px = src[x, y]
+                val = int(
+                    (0.2126 * px[0] + 0.7152 * px[1] + 0.0722 * px[2]) * px[3] / 255
+                )
+                pixels[x, y] = min(255, max(0, val))
+        return luma.point(lambda v: 255 if v > 128 else 0)
+
+    elif method == "legacy" or method == "legacy_mask":
+        # Backward-compat: derive mask from grayscale threshold on rendered frame
+        grey = img.convert("L")
+        return grey.point(lambda p: 255 if p > 200 else 0)
+    else:
+        raise ValueError(
+            f"Unknown mask method: {method}. Use 'alpha', 'alpha2', 'luma', or 'legacy'."
+        )
 
 
 def composite_card(raw_path, svg_path, output_path, **kw):
@@ -208,26 +320,36 @@ def composite_card(raw_path, svg_path, output_path, **kw):
         px = ax0 + (aw - art.width) // 2 + int(nx)
         py = ay0 + (ah - art.height) // 2 + int(ny)
 
-        # --- mask: independent render at art box size (aw, ah) ---
+        # --- mask: render at frame inner size, resize to art box ---
         art_layer = Image.new("RGBA", (tw, th), (0, 0, 0, 0))
         art_layer.paste(art, (px, py), art)
 
+        # Render mask at frame inner size (matches frame render)
+        mask_method = kw.get("mask_method", "alpha")
+        mask_full = _generate_mask(
+            svg_path, render_size=(fw, fh), stretch=fixed, method=mask_method
+        )
+
         if pad_int > 0:
-            # Mask is smaller than frame inner aperture — independent resize
-            mask_target = _render_mask_from_template(svg_path, (aw, ah))
+            # Resize mask from frame inner to art box (LANCZOS preserves edges)
+            mask_target = mask_full.resize((aw, ah), Image.LANCZOS)
         else:
-            # No pad_internal: render at frame inner size, only mask if art overflows
-            mask_target = _render_mask_from_template(svg_path, (aw, ah))
+            mask_target = mask_full
 
         full_mask = Image.new("L", (tw, th), 0)
         full_mask.paste(mask_target, (ax0, ay0))
+        full_mask = full_mask.resize((tw, th), Image.LANCZOS)
+        # full_mask = full_mask.filter(ImageFilter.SMOOTH_MORE)
+        full_mask = full_mask.filter(ImageFilter.GaussianBlur(radius=.8))
+
         art_layer.putalpha(full_mask)
 
         # --- final ---
         canvas.paste(frame, (fx, fy), frame)
+        # canvas.paste(a_layer, (0,0), a_layer)
         canvas.paste(art_layer, (0, 0), art_layer)
 
-        canvas.save(output_path, "PNG")
+        canvas.save(output_path, "PNG", optimize=True)
         return True
 
     except Exception as e:
@@ -235,7 +357,7 @@ def composite_card(raw_path, svg_path, output_path, **kw):
         return False
 
 
-def composite_batch(raw_dir, output_dir, svg_path, **kw):
+def composite_batch(raw_dir, output_dir, svg_path, mask_method="alpha", **kw):
     raw_dir = pathlib.Path(raw_dir)
     output_dir = pathlib.Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -252,7 +374,7 @@ def composite_batch(raw_dir, output_dir, svg_path, **kw):
             sk += 1
             continue
 
-        if composite_card(file, svg_path, out, **kw):
+        if composite_card(file, svg_path, out, mask_method=mask_method, **kw):
             s += 1
         else:
             f += 1

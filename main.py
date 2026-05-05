@@ -38,17 +38,24 @@ def main():
     )
 
     parser.add_argument("--pad-edge", type=str, default="0")
-    parser.add_argument("--pad-internal", type=str, default="48")
+    parser.add_argument("--pad-internal", type=str, default="8%")
 
     parser.add_argument("--contain", action="store_true")
     parser.add_argument("--scale", type=float, default=1.0)
     parser.add_argument("--nudge", type=str, default="0,0", help="Art nudge as X,Y")
 
     parser.add_argument("--no-shadow", action="store_false", dest="add_shadow")
-    parser.add_argument("--shadow-radius", type=str, default="3.8")
-    parser.add_argument("--shadow-offset-x", type=str, default="1.5")
-    parser.add_argument("--shadow-offset-y", type=str, default="1.5")
+    parser.add_argument("--shadow-radius", type=str, default="2")
+    parser.add_argument("--shadow-offset-x", type=str, default="1")
+    parser.add_argument("--shadow-offset-y", type=str, default="1")
     parser.add_argument("--shadow-opacity", type=int, default=150)
+    parser.add_argument(
+        "--mask-method",
+        type=str,
+        choices=["alpha", "alpha2", "luma"],
+        default="alpha",
+        help="Mask generation method: alpha (default), alpha2 (threshold), luma (weighted)",
+    )
     # parser.add_argument("--shadow-color", type=[], default="")
     parser.set_defaults(add_shadow=True)
 
