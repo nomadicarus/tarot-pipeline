@@ -50,7 +50,9 @@ def _parse_unit(value, ref):
     return num * ref / 100 if unit == "%" else num
 
 
-def _load_frame(svg_path: str, target_size: tuple[int, int] | None = None, stretch: bool = False) -> Image.Image:
+def _load_frame(
+    svg_path: str, target_size: tuple[int, int] | None = None, stretch: bool = False
+) -> Image.Image:
     p = pathlib.Path(svg_path)
     ext = p.suffix.lower()
 
@@ -83,12 +85,40 @@ def _load_frame(svg_path: str, target_size: tuple[int, int] | None = None, stret
 def _extract_inner_mask(frame: Image.Image) -> Image.Image:
     """Extract the inner aperture mask from the rendered frame.
 
-    The card interior is bright white, the border stroke is dark.
-    Threshold the luminance to get the inner aperture shape including
-    curved corners.
+    Deprecated in favor of template-rendered masks. Kept for backward compat
+    but not used by default masking path.
     """
     grey = frame.convert("L")
     mask = grey.point(lambda p: 255 if p > 200 else 0)
+    return mask
+
+
+def _render_mask_from_template(
+    svg_path: str, target_size: tuple[int, int]
+) -> Image.Image:
+    """Render the frame template and return a luminance mask at target_size.
+
+    - For SVG: render via cairosvg to target_size, threshold luminance
+    - For PNG: resize to target_size, threshold luminance
+    Returns a single-channel ('L') mask image of size target_size.
+    White = visible aperture region.
+    """
+    p = pathlib.Path(svg_path)
+    ext = p.suffix.lower()
+    if ext == ".svg":
+        if cairosvg is None:
+            raise ImportError("cairosvg required for SVG rendering")
+        png_bytes = cairosvg.svg2png(
+            url=str(p), output_width=target_size[0], output_height=target_size[1]
+        )
+        img = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
+    elif ext == ".png":
+        img = Image.open(p).convert("RGBA").resize(target_size, Image.LANCZOS)
+    else:
+        raise ValueError(f"Unsupported template format: {ext}")
+
+    grey = img.convert("L")
+    mask = grey.point(lambda v: 255 if v > 200 else 0)
     return mask
 
 
@@ -104,10 +134,20 @@ def composite_card(raw_path, svg_path, output_path, **kw):
         else:
             ew, eh = kw["size"]
             nw, nh = _frame_native_size(svg_path)
-            scale_w = ew / nw if ew else 0
-            scale_h = eh / nh if eh else 0
-            scale = max(scale_w, scale_h, 1.0)
-            tw, th = int(nw * scale), int(nh * scale)
+            # 0 means unconstrained for that dimension
+            if ew == 0 and eh > 0:
+                scale = eh / nh
+                tw, th = int(nw * scale), eh
+            elif eh == 0 and ew > 0:
+                scale = ew / nw
+                tw, th = ew, int(nh * scale)
+            else:
+                scale_w = ew / nw if ew else 0
+                scale_h = eh / nh if eh else 0
+                scale = max(scale_w, scale_h, 0.0)
+                if scale == 0:
+                    scale = 1.0
+                tw, th = int(nw * scale), int(nh * scale)
 
         canvas = Image.new("RGBA", (tw, th), (0, 0, 0, 0))
 
@@ -168,18 +208,19 @@ def composite_card(raw_path, svg_path, output_path, **kw):
         px = ax0 + (aw - art.width) // 2 + int(nx)
         py = ay0 + (ah - art.height) // 2 + int(ny)
 
-        # --- mask ONLY inside art box ---
+        # --- mask: independent render at art box size (aw, ah) ---
         art_layer = Image.new("RGBA", (tw, th), (0, 0, 0, 0))
         art_layer.paste(art, (px, py), art)
 
-        # Extract inner aperture mask from frame luminance
-        inner_mask = _extract_inner_mask(frame)
+        if pad_int > 0:
+            # Mask is smaller than frame inner aperture — independent resize
+            mask_target = _render_mask_from_template(svg_path, (aw, ah))
+        else:
+            # No pad_internal: render at frame inner size, only mask if art overflows
+            mask_target = _render_mask_from_template(svg_path, (aw, ah))
 
-        # Position inner_mask on a full-canvas mask
         full_mask = Image.new("L", (tw, th), 0)
-        full_mask.paste(inner_mask, (fx, fy))
-
-        # Apply mask to art layer
+        full_mask.paste(mask_target, (ax0, ay0))
         art_layer.putalpha(full_mask)
 
         # --- final ---

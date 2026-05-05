@@ -18,13 +18,24 @@ def main():
     parser.add_argument("--card", nargs="*")
 
     parser.add_argument("--force", action="store_true")
-    parser.add_argument("--raw", action="store_true", help="Composite all raw PNGs regardless of metadata")
+    parser.add_argument(
+        "--raw",
+        action="store_true",
+        help="Composite all raw PNGs regardless of metadata",
+    )
 
     parser.add_argument("--template", type=str, default="assets/cardface.svg")
 
     # Sizing
-    parser.add_argument("--size", type=str, default="0,0", help="Elastic canvas size W,H (0=unconstrained)")
-    parser.add_argument("--fix-size", type=str, default=None, help="Fixed canvas size W,H")
+    parser.add_argument(
+        "--size",
+        type=str,
+        default="0,0",
+        help="Elastic canvas size W,H (0=unconstrained)",
+    )
+    parser.add_argument(
+        "--fix-size", type=str, default=None, help="Fixed canvas size W,H"
+    )
 
     parser.add_argument("--pad-edge", type=str, default="0")
     parser.add_argument("--pad-internal", type=str, default="48")
