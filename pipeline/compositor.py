@@ -3,7 +3,6 @@ import io
 import logging
 import pathlib
 import re
-from typing import Optional, Tuple
 
 from PIL import Image, ImageFilter
 
@@ -15,104 +14,179 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
-def _load_frame(svg_path: str, target_size: Tuple[int, int]) -> Image.Image:
-    svg_path = pathlib.Path(svg_path)
-    svg_text = svg_path.read_text()
-    match = re.search(r'data:image/png;base64,([^"\']+)', svg_text)
-    if match:
-        return Image.open(io.BytesIO(base64.b64decode(match.group(1)))).convert("RGBA")
-    if cairosvg is None:
-        raise ImportError("Vector SVG detected. Please install: pip install cairosvg")
-    png_data = cairosvg.svg2png(url=str(svg_path), output_width=target_size[0] * 2)
-    return Image.open(io.BytesIO(png_data)).convert("RGBA")
+# ---------------------------
+# Helpers
+# ---------------------------
+def _get_svg_aspect(svg_path):
+    text = pathlib.Path(svg_path).read_text()
+    m = re.search(r'viewBox="[\d.]+ [\d.]+ ([\d.]+) ([\d.]+)"', text)
+    if m:
+        return float(m.group(1)) / float(m.group(2))
+    return 734 / 1024  # fallback
 
 
-def _generate_shadow(template: Image.Image, radius: int) -> Image.Image:
-    shadow_mask = template.split()[3]
-    shadow = Image.new("RGBA", template.size, (0, 0, 0, 0))
-    black_layer = Image.new("RGBA", template.size, (0, 0, 0, 150))
-    shadow.paste(black_layer, (0, 0), mask=shadow_mask)
-    return shadow.filter(ImageFilter.GaussianBlur(radius))
+def _parse_unit(value, ref):
+    if isinstance(value, (int, float)):
+        return float(value)
+    value = str(value).strip().lower()
+    m = re.match(r"([+-]?\d*\.?\d+)\s*(px|%)?", value)
+    if not m:
+        return 0.0
+    num, unit = float(m.group(1)), m.group(2)
+    return num * ref / 100 if unit == "%" else num
 
 
-def composite_card(raw_path, svg_path, output_path, **kwargs):
+def _load_frame(svg_path: str, target_size: tuple[int, int]) -> Image.Image:
+    p = pathlib.Path(svg_path)
+    ext = p.suffix.lower()
+
+    # PNG path (simple)
+    if ext == ".png":
+        return Image.open(p).convert("RGBA").resize(target_size, Image.LANCZOS)
+
+    if ext == ".svg":
+        if cairosvg is None:
+            raise ImportError("cairosvg required for SVG rendering")
+
+        png_bytes = cairosvg.svg2png(
+            url=str(p),
+            output_width=target_size[0],
+            output_height=target_size[1],
+        )
+
+        return Image.open(io.BytesIO(png_bytes)).convert("RGBA")
+
+    raise ValueError(f"Unsupported format: {ext}")
+
+
+def composite_card(raw_path, svg_path, output_path, **kw):
     try:
-        width = kwargs.get("width", 1024)
-        height = kwargs.get("height", 1024)
-        pad_edge = kwargs.get("pad_edge", 0)
-        pad_internal = kwargs.get("pad_internal", 0)
-        add_shadow = kwargs.get("add_shadow", True)
-        s_radius = kwargs.get("shadow_radius", 5)
-        s_offset = kwargs.get("shadow_offset", (3, 3))
+        frame_raw = _load_frame(svg_path)
 
-        # 1. SHADOW AWARENESS: pad_edge 0 cases require buffer if shadow is enabled
-        shadow_buffer = s_radius * 2
-        effective_pad = max(pad_edge, shadow_buffer) if add_shadow else pad_edge
+        fixed = kw.get("fixed", False)
 
-        temp_w, temp_h = width - (2 * effective_pad), height - (2 * effective_pad)
-        art_w, art_h = temp_w - (2 * pad_internal), temp_h - (2 * pad_internal)
+        # --- sizing ---
+        if fixed:
+            tw, th = kw["width_f"], kw["height_f"]
+        else:
+            tw, th = kw["width"], kw["height"]
 
-        # 2. TEMPLATE & MASK
-        template_src = _load_frame(svg_path, (temp_w, temp_h)).resize(
-            (temp_w, temp_h), Image.LANCZOS
-        )
-        template_alpha = template_src.split()[3]
-        art_mask = template_alpha.resize((art_w, art_h), Image.LANCZOS)
+        canvas = Image.new("RGBA", (tw, th), (0, 0, 0, 0))
 
-        # 3. ART
-        art_img = (
-            Image.open(raw_path).convert("RGBA").resize((art_w, art_h), Image.LANCZOS)
+        # --- edge padding ---
+        pad_edge = _parse_unit(kw.get("pad_edge", 0), tw)
+
+        # --- frame scaling ---
+        scale = min(
+            (tw - pad_edge * 2) / frame_raw.width,
+            (th - pad_edge * 2) / frame_raw.height,
         )
 
-        # 4. ASSEMBLY
-        canvas = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-        temp_off = ((width - temp_w) // 2, (height - temp_h) // 2)
-        art_off = ((width - art_w) // 2, (height - art_h) // 2)
+        fw, fh = int(frame_raw.width * scale), int(frame_raw.height * scale)
+        frame = _load_frame(svg_path, (fw, fh))
 
-        if add_shadow:
-            shadow_img = _generate_shadow(template_src, s_radius)
-            shadow_off = (temp_off[0] + s_offset[0], temp_off[1] + s_offset[1])
-            canvas.alpha_composite(shadow_img, dest=shadow_off)
+        fx = (tw - fw) // 2
+        fy = (th - fh) // 2
 
-        canvas.alpha_composite(template_src, dest=temp_off)
-        canvas.paste(art_img, art_off, mask=art_mask)
+        # --- shadow ---
+        if kw.get("add_shadow", True):
+            radius = _parse_unit(kw.get("shadow_radius", 3.8), fw)
+            offset_x = _parse_unit(kw.get("shadow_offset_x", 1.5), fw)
+            offset_y = _parse_unit(kw.get("shadow_offset_y", 1.5), fh)
+            opacity = kw.get("shadow_opacity", 150)
 
-        canvas.save(output_path, "PNG", optimize=True)
+            alpha = frame.split()[3]
+            shadow = Image.new("L", (fw, fh), 0)
+            shadow.paste(alpha, (0, 0))
+            shadow = shadow.filter(ImageFilter.GaussianBlur(radius))
+
+            shadow_rgba = Image.new("RGBA", (fw, fh), (0, 0, 0, opacity))
+            shadow_rgba.putalpha(shadow)
+
+            canvas.paste(
+                shadow_rgba,
+                (int(fx + offset_x), int(fy + offset_y)),
+                shadow_rgba,
+            )
+
+        # --- art box ---
+        pad_int = _parse_unit(kw.get("pad_internal", 48), fw)
+
+        ax0 = fx + int(pad_int)
+        ay0 = fy + int(pad_int)
+        aw = fw - int(pad_int * 2)
+        ah = fh - int(pad_int * 2)
+
+        art = Image.open(raw_path).convert("RGBA")
+
+        if kw.get("f_crop"):
+            s = max(aw / art.width, ah / art.height)
+        else:
+            s = min(aw / art.width, ah / art.height)
+
+        s *= kw.get("art_scale", 1.0)
+
+        art = art.resize((int(art.width * s), int(art.height * s)), Image.LANCZOS)
+
+        nx = _parse_unit(kw.get("art_nudge", ("0", "0"))[0], fw)
+        ny = _parse_unit(kw.get("art_nudge", ("0", "0"))[1], fh)
+
+        px = ax0 + (aw - art.width) // 2 + int(nx)
+        py = ay0 + (ah - art.height) // 2 + int(ny)
+
+        # --- mask ONLY inside art box ---
+        art_layer = Image.new("RGBA", (tw, th), (0, 0, 0, 0))
+        art_layer.paste(art, (px, py), art)
+
+        mask = Image.new("L", (tw, th), 0)
+        frame_alpha = frame.split()[3]
+
+        # CRITICAL: crop inner mask, do NOT scale whole frame
+        inner_mask = frame_alpha.crop(
+            (
+                int(pad_int),
+                int(pad_int),
+                int(fw - pad_int),
+                int(fh - pad_int),
+            )
+        )
+
+        mask.paste(inner_mask, (ax0, ay0))
+
+        art_layer.putalpha(mask)
+
+        # --- final ---
+        canvas.paste(frame, (fx, fy), frame)
+        canvas.paste(art_layer, (0, 0), art_layer)
+
+        canvas.save(output_path, "PNG")
         return True
+
     except Exception as e:
-        logger.error(f"Failed {pathlib.Path(raw_path).name}: {e}")
+        logger.error(f"{raw_path.name}: {e}")
         return False
 
 
-def composite_batch(raw_dir, output_dir, svg_path, **kwargs):
-    raw_dir, output_dir = pathlib.Path(raw_dir), pathlib.Path(output_dir)
+def composite_batch(raw_dir, output_dir, svg_path, **kw):
+    raw_dir = pathlib.Path(raw_dir)
+    output_dir = pathlib.Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    files = [
-        p
-        for p in raw_dir.iterdir()
-        if p.is_file() and p.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}
-    ]
+    s = sk = f = 0
 
-    # Sanitize inputs
-    clean_kwargs = {
-        "width": int(kwargs.get("width") or 1024),
-        "height": int(kwargs.get("height") or 1024),
-        "pad_edge": int(kwargs.get("pad_edge") or 0),
-        "pad_internal": int(kwargs.get("pad_internal") or 0),
-        "add_shadow": kwargs.get("add_shadow", True),
-        "shadow_radius": int(kwargs.get("shadow_radius", 5)),
-        "shadow_offset": kwargs.get("shadow_offset", (3, 3)),
-    }
+    for file in raw_dir.iterdir():
+        if file.suffix.lower() not in (".png", ".jpg", ".jpeg"):
+            continue
 
-    s, sk, f = 0, 0, 0
-    for path in files:
-        out_path = output_dir / f"{path.stem}.png"
-        if out_path.exists() and not kwargs.get("force"):
+        out = output_dir / f"{file.stem}.png"
+
+        if out.exists() and not kw.get("force"):
             sk += 1
             continue
-        if composite_card(path, svg_path, out_path, **clean_kwargs):
+
+        if composite_card(file, svg_path, out, **kw):
             s += 1
         else:
             f += 1
+
     return s, sk, f
